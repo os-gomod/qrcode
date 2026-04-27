@@ -1,48 +1,25 @@
 package payload
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
 
-// CryptoBTC represents Bitcoin.
-// The encoded URI scheme is "bitcoin:".
-// Used as the CryptoType field in CryptoPayload.
-const CryptoBTC = "BTC"
+const (
+	CryptoBTC = "BTC"
+	CryptoETH = "ETH"
+	CryptoLTC = "LTC"
+)
 
-// CryptoETH represents Ethereum.
-// The encoded URI scheme is "ethereum:".
-// Used as the CryptoType field in CryptoPayload.
-const CryptoETH = "ETH"
-
-// CryptoLTC represents Litecoin.
-// The encoded URI scheme is "litecoin:".
-// Used as the CryptoType field in CryptoPayload.
-const CryptoLTC = "LTC"
-
-// CryptoPayload encodes a cryptocurrency payment request as a URI following
-// the BIP21 Bitcoin URI scheme (adapted for ETH and LTC).
-// When scanned by a crypto wallet app, the user is prompted to send the
-// specified amount to the given address.
-//
-// Example encoded output:
-//
-//	bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?amount=0.01&label=Tip&message=Thanks
 type CryptoPayload struct {
-	// Address is the wallet address.
-	Address string
-	// Amount is the optional payment amount.
-	Amount string
-	// Label is an optional label for the transaction.
-	Label string
-	// Message is an optional message for the transaction.
-	Message string
-	// CryptoType is the cryptocurrency type (BTC, ETH, or LTC).
+	Address    string
+	Amount     string
+	Label      string
+	Message    string
 	CryptoType string
 }
 
-// Encode returns a cryptocurrency URI with optional amount, label, and
-// message query parameters. Format: <scheme>:<address>[?amount=...&label=...&message=...].
 func (c *CryptoPayload) Encode() (string, error) {
 	if err := c.Validate(); err != nil {
 		return "", err
@@ -69,11 +46,9 @@ func (c *CryptoPayload) Encode() (string, error) {
 	return b.String(), nil
 }
 
-// Validate checks that the address is non-empty and the crypto type is one of
-// BTC, ETH, or LTC.
 func (c *CryptoPayload) Validate() error {
 	if c.Address == "" {
-		return fmt.Errorf("crypto payload: address must not be empty")
+		return errors.New("crypto payload: address must not be empty")
 	}
 	if !isValidCryptoType(c.CryptoType) {
 		return fmt.Errorf("crypto payload: unsupported crypto type %q, must be one of BTC, ETH, LTC", c.CryptoType)
@@ -81,14 +56,12 @@ func (c *CryptoPayload) Validate() error {
 	return nil
 }
 
-// Type returns "crypto".
-func (c *CryptoPayload) Type() string {
+func (*CryptoPayload) Type() string {
 	return "crypto"
 }
 
-// Size returns the byte length of the encoded crypto URI.
 func (c *CryptoPayload) Size() int {
-	encoded, _ := c.Encode() //nolint:errcheck // Size returns 0 on encode error
+	encoded, _ := c.Encode()
 	return len(encoded)
 }
 

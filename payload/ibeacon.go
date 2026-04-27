@@ -1,37 +1,18 @@
 package payload
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
 
-// IBeaconPayload encodes an iBeacon Bluetooth Low Energy (BLE) beacon
-// configuration as a URL following the open beacon registry format
-// (https://github.com/google/beacon).
-// The URL points to <manufacturer>.github.io/beacon/ with UUID, major,
-// and minor as query parameters. When scanned, the beacon data can be
-// extracted and used by beacon-aware applications.
-//
-// The UUID must be in the standard format: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX.
-// Major and Minor are 16-bit unsigned integers used for proximity identification.
-//
-// Example encoded output:
-//
-//	https://beacon.github.io/beacon/?uuid=A1B2C3D4-E5F6-7890-ABCD-EF1234567890&major=1&minor=42
 type IBeaconPayload struct {
-	// UUID is the iBeacon proximity UUID.
-	UUID string
-	// Major is the iBeacon major value.
-	Major uint16
-	// Minor is the iBeacon minor value.
-	Minor uint16
-	// Manufacturer is the optional manufacturer identifier (defaults to "beacon").
+	UUID         string
+	Major        uint16
+	Minor        uint16
 	Manufacturer string
 }
 
-// Encode returns an iBeacon URL following the beacon registry format.
-// Format: https://<manufacturer>.github.io/beacon/?uuid=<UUID>&major=<N>&minor=<N>
-// The manufacturer defaults to "beacon" if not specified.
 func (ib *IBeaconPayload) Encode() (string, error) {
 	if err := ib.Validate(); err != nil {
 		return "", err
@@ -53,11 +34,9 @@ func (ib *IBeaconPayload) Encode() (string, error) {
 	return b.String(), nil
 }
 
-// Validate checks that the UUID is non-empty and matches the format
-// XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX (32 hex digits with hyphens).
 func (ib *IBeaconPayload) Validate() error {
 	if ib.UUID == "" {
-		return fmt.Errorf("ibeacon payload: UUID must not be empty")
+		return errors.New("ibeacon payload: UUID must not be empty")
 	}
 	if !isValidUUID(ib.UUID) {
 		return fmt.Errorf("ibeacon payload: invalid UUID format %q, expected format XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX", ib.UUID)
@@ -65,14 +44,12 @@ func (ib *IBeaconPayload) Validate() error {
 	return nil
 }
 
-// Type returns "ibeacon".
-func (ib *IBeaconPayload) Type() string {
+func (*IBeaconPayload) Type() string {
 	return "ibeacon"
 }
 
-// Size returns the byte length of the encoded iBeacon URL.
 func (ib *IBeaconPayload) Size() int {
-	encoded, _ := ib.Encode() //nolint:errcheck // Size returns 0 on encode error
+	encoded, _ := ib.Encode()
 	return len(encoded)
 }
 
@@ -85,7 +62,7 @@ func isValidUUID(s string) bool {
 	if len(clean) != 32 {
 		return false
 	}
-	for i := 0; i < len(clean); i++ {
+	for i := range len(clean) {
 		c := clean[i]
 		if !isHexDigit(c) {
 			return false

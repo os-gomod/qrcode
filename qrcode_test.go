@@ -1,88 +1,133 @@
 package qrcode
 
 import (
-	"bytes"
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/os-gomod/qrcode/payload"
+	"github.com/os-gomod/qrcode/v2/payload"
 )
 
-func TestNew(t *testing.T) {
+// ---------------------------------------------------------------------------
+// Config tests
+// ---------------------------------------------------------------------------
+
+func TestDefaultConfig(t *testing.T) {
+	cfg := defaultConfig()
+	if cfg.DefaultECLevel != "M" {
+		t.Errorf("DefaultECLevel = %q, want 'M'", cfg.DefaultECLevel)
+	}
+	if cfg.WorkerCount != 4 {
+		t.Errorf("WorkerCount = %d, want 4", cfg.WorkerCount)
+	}
+	if cfg.DefaultSize != 300 {
+		t.Errorf("DefaultSize = %d, want 300", cfg.DefaultSize)
+	}
+	if cfg.QuietZone != 4 {
+		t.Errorf("QuietZone = %d, want 4", cfg.QuietZone)
+	}
+	if cfg.MaskPattern != -1 {
+		t.Errorf("MaskPattern = %d, want -1", cfg.MaskPattern)
+	}
+	if cfg.AutoSize != true {
+		t.Error("AutoSize should be true")
+	}
+}
+
+func TestConfig_Clone(t *testing.T) {
+	orig := defaultConfig()
+	clone := orig.Clone()
+	if clone == orig {
+		t.Error("Clone should return a new pointer")
+	}
+	clone.DefaultSize = 999
+	if orig.DefaultSize == 999 {
+		t.Error("modifying clone should not affect original")
+	}
+}
+
+func TestConfig_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
-		opts    []Option
+		modify  func(*Config)
 		wantErr bool
 	}{
-		{name: "no options"},
-		{name: "with size", opts: []Option{WithDefaultSize(200)}},
-		{name: "with EC level", opts: []Option{WithErrorCorrection(LevelH)}},
-		{name: "with cache", opts: []Option{}},
-		{name: "invalid worker count", opts: []Option{WithWorkerCount(0)}, wantErr: true},
-		{name: "invalid size", opts: []Option{WithDefaultSize(50)}, wantErr: true},
+		{"valid default", func(c *Config) {}, false},
+		{"min > max version", func(c *Config) { c.MinVersion = 10; c.MaxVersion = 5 }, true},
+		{"default version out of range", func(c *Config) { c.DefaultVersion = 50 }, true},
+		{"worker count too low", func(c *Config) { c.WorkerCount = 0 }, true},
+		{"worker count too high", func(c *Config) { c.WorkerCount = 100 }, true},
+		{"queue size too low", func(c *Config) { c.QueueSize = 0 }, true},
+		{"size too small", func(c *Config) { c.DefaultSize = 50 }, true},
+		{"size too large", func(c *Config) { c.DefaultSize = 5000 }, true},
+		{"quiet zone negative", func(c *Config) { c.QuietZone = -1 }, true},
+		{"quiet zone too large", func(c *Config) { c.QuietZone = 25 }, true},
+		{"logo overlay without source", func(c *Config) { c.LogoOverlay = true; c.LogoSource = "" }, true},
+		{"logo size ratio too small", func(c *Config) { c.LogoSizeRatio = 0.01 }, true},
+		{"logo size ratio too large", func(c *Config) { c.LogoSizeRatio = 0.5 }, true},
+		{"mask pattern too high", func(c *Config) { c.MaskPattern = 8 }, true},
+		{"mask pattern valid auto", func(c *Config) { c.MaskPattern = -1 }, false},
+		{"mask pattern valid", func(c *Config) { c.MaskPattern = 3 }, false},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g, err := New(tt.opts...)
-			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
-				return
+			cfg := defaultConfig()
+			tt.modify(cfg)
+			err := cfg.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr = %v", err, tt.wantErr)
 			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if g == nil {
-				t.Fatal("expected non-nil Generator")
-			}
-			defer g.Close(context.Background())
 		})
 	}
 }
 
-func TestMustNew(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("MustNew should panic on error")
-		}
-	}()
-	MustNew(WithWorkerCount(0))
-}
-
-func TestMustNewValid(t *testing.T) {
-	g := MustNew()
-	if g == nil {
-		t.Fatal("MustNew returned nil")
-	}
-	defer g.Close(context.Background())
-}
-
-func TestErrorCorrectionLevelString(t *testing.T) {
+func TestParseECLevel(t *testing.T) {
 	tests := []struct {
-		level ErrorCorrectionLevel
-		want  string
+		input string
+		want  int
+	}{
+		{"L", 0},
+		{"M", 1},
+		{"Q", 2},
+		{"H", 3},
+		{"", -1},
+		{"X", -1},
+		{"m", -1},
+	}
+	for _, tt := range tests {
+		got := parseECLevel(tt.input)
+		if got != tt.want {
+			t.Errorf("parseECLevel(%q) = %d, want %d", tt.input, got, tt.want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Format / ECLevel tests
+// ---------------------------------------------------------------------------
+
+func TestECLevel_String(t *testing.T) {
+	tests := []struct {
+		l    ECLevel
+		want string
 	}{
 		{LevelL, "L"},
 		{LevelM, "M"},
 		{LevelQ, "Q"},
 		{LevelH, "H"},
-		{ErrorCorrectionLevel(99), "M"},
+		{ECLevel(99), "M"}, // default fallback
 	}
-
 	for _, tt := range tests {
-		got := tt.level.String()
-		if got != tt.want {
-			t.Errorf("Level(%d).String() = %q, want %q", tt.level, got, tt.want)
+		if got := tt.l.String(); got != tt.want {
+			t.Errorf("ECLevel(%d).String() = %q, want %q", tt.l, got, tt.want)
 		}
 	}
 }
 
-func TestFormatString(t *testing.T) {
+func TestFormat_String(t *testing.T) {
 	tests := []struct {
 		f    Format
 		want string
@@ -94,768 +139,598 @@ func TestFormatString(t *testing.T) {
 		{FormatBase64, "base64"},
 		{Format(99), "unknown"},
 	}
-
 	for _, tt := range tests {
-		got := tt.f.String()
-		if got != tt.want {
+		if got := tt.f.String(); got != tt.want {
 			t.Errorf("Format(%d).String() = %q, want %q", tt.f, got, tt.want)
 		}
 	}
 }
 
-func TestNewBuilder(t *testing.T) {
-	b := NewBuilder()
-	if b == nil {
-		t.Fatal("NewBuilder returned nil")
+func TestFormat_Extension(t *testing.T) {
+	tests := []struct {
+		f    Format
+		want string
+	}{
+		{FormatPNG, ".png"},
+		{FormatSVG, ".svg"},
+		{FormatTerminal, ".txt"},
+		{FormatPDF, ".pdf"},
+		{FormatBase64, ".b64"},
+		{Format(99), ".png"}, // default
+	}
+	for _, tt := range tests {
+		if got := tt.f.Extension(); got != tt.want {
+			t.Errorf("Format(%d).Extension() = %q, want %q", tt.f, got, tt.want)
+		}
 	}
 }
 
-func TestBuilderBuild(t *testing.T) {
-	b := NewBuilder().Size(200)
-	g, err := b.Build()
-	if err != nil {
-		t.Fatalf("Build error: %v", err)
+// ---------------------------------------------------------------------------
+// Helpers tests
+// ---------------------------------------------------------------------------
+
+func TestQuickSize(t *testing.T) {
+	if quickSize() != 256 {
+		t.Errorf("quickSize() = %d, want 256", quickSize())
 	}
-	if g == nil {
-		t.Fatal("Build returned nil")
+	if quickSize(0) != 256 {
+		t.Errorf("quickSize(0) = %d, want 256", quickSize(0))
 	}
-	defer g.Close(context.Background())
+	if quickSize(512) != 512 {
+		t.Errorf("quickSize(512) = %d, want 512", quickSize(512))
+	}
 }
 
-func TestBuilderClone(t *testing.T) {
-	b := NewBuilder().Size(200).Margin(2)
-	c := b.Clone()
-	if c == nil {
-		t.Fatal("Clone returned nil")
-	}
+// ---------------------------------------------------------------------------
+// New / MustNew / Close
+// ---------------------------------------------------------------------------
 
-	g1, err := b.Build()
+func TestNew(t *testing.T) {
+	client, err := New()
 	if err != nil {
-		t.Fatalf("Build error: %v", err)
+		t.Fatalf("New() error: %v", err)
 	}
-	defer g1.Close(context.Background())
-
-	g2, err := c.Build()
-	if err != nil {
-		t.Fatalf("Cloned Build error: %v", err)
+	if client == nil {
+		t.Fatal("New() returned nil")
 	}
-	defer g2.Close(context.Background())
+	if client.Closed() {
+		t.Error("new client should not be closed")
+	}
 }
+
+func TestNew_WithOptions(t *testing.T) {
+	client, err := New(WithDefaultSize(512), WithErrorCorrection(LevelH))
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+}
+
+func TestNew_InvalidConfig(t *testing.T) {
+	_, err := New(WithDefaultSize(50)) // Too small.
+	if err == nil {
+		t.Error("expected error for invalid config")
+	}
+}
+
+func TestMustNew(t *testing.T) {
+	client := MustNew()
+	defer func() { _ = client.Close() }()
+	if client == nil {
+		t.Fatal("MustNew() returned nil")
+	}
+}
+
+func TestMustNew_Panics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("MustNew should panic on invalid config")
+		}
+	}()
+	MustNew(WithDefaultSize(50))
+}
+
+func TestNewClient_Alias(t *testing.T) {
+	client, err := NewClient()
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+}
+
+func TestMustNewClient_Alias(t *testing.T) {
+	client := MustNewClient()
+	defer func() { _ = client.Close() }()
+	if client == nil {
+		t.Fatal("MustNewClient() returned nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Client — the actual client implementation
+// ---------------------------------------------------------------------------
+
+func TestGenerate_TextPayload(t *testing.T) {
+	client := MustNew()
+	defer func() { _ = client.Close() }()
+	ctx := context.Background()
+
+	qr, err := client.Generate(ctx, &payload.TextPayload{Text: "Hello"})
+	if err != nil {
+		t.Fatalf("Generate() error: %v", err)
+	}
+	if qr == nil {
+		t.Fatal("Generate() returned nil QRCode")
+	}
+	if qr.Version < 1 || qr.Version > 40 {
+		t.Errorf("Version = %d, out of range", qr.Version)
+	}
+	if qr.Size < 21 {
+		t.Errorf("Size = %d, too small", qr.Size)
+	}
+}
+
+func TestGenerate_WithOptions(t *testing.T) {
+	client := MustNew()
+	defer func() { _ = client.Close() }()
+	ctx := context.Background()
+
+	qr, err := client.GenerateWithOptions(ctx, &payload.TextPayload{Text: "test"}, WithErrorCorrection(LevelH))
+	if err != nil {
+		t.Fatalf("GenerateWithOptions() error: %v", err)
+	}
+	if qr.ECLevel != 3 {
+		t.Errorf("ECLevel = %d, want 3 (H)", qr.ECLevel)
+	}
+}
+
+func TestGenerate_ClosedClient(t *testing.T) {
+	client := MustNew()
+	_ = client.Close()
+	ctx := context.Background()
+	_, err := client.Generate(ctx, &payload.TextPayload{Text: "test"})
+	if err == nil {
+		t.Error("expected error from closed client")
+	}
+}
+
+func TestGenerate_CancelledContext(t *testing.T) {
+	client := MustNew()
+	defer func() { _ = client.Close() }()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := client.Generate(ctx, &payload.TextPayload{Text: "test"})
+	if err == nil {
+		t.Error("expected error with cancelled context")
+	}
+}
+
+func TestGenerate_EmptyPayload(t *testing.T) {
+	client := MustNew()
+	defer func() { _ = client.Close() }()
+	ctx := context.Background()
+	_, err := client.Generate(ctx, &payload.TextPayload{Text: ""})
+	if err == nil {
+		t.Error("expected error for empty payload")
+	}
+}
+
+func TestRender_AllFormats(t *testing.T) {
+	client := MustNew()
+	defer func() { _ = client.Close() }()
+	ctx := context.Background()
+	p := &payload.TextPayload{Text: "render-test"}
+
+	formats := []Format{FormatPNG, FormatSVG, FormatTerminal, FormatPDF, FormatBase64}
+	for _, f := range formats {
+		t.Run(f.String(), func(t *testing.T) {
+			data, err := client.Render(ctx, p, f)
+			if err != nil {
+				t.Fatalf("Render(%s) error: %v", f, err)
+			}
+			if len(data) == 0 {
+				t.Errorf("Render(%s) returned empty data", f)
+			}
+		})
+	}
+}
+
+func TestGenerateToWriter(t *testing.T) {
+	client := MustNew()
+	defer func() { _ = client.Close() }()
+	ctx := context.Background()
+	p := &payload.TextPayload{Text: "writer-test"}
+
+	var buf strings.Builder
+	err := client.GenerateToWriter(ctx, p, &buf, FormatSVG)
+	if err != nil {
+		t.Fatalf("GenerateToWriter() error: %v", err)
+	}
+	if buf.Len() == 0 {
+		t.Error("GenerateToWriter() should write data")
+	}
+}
+
+func TestSave(t *testing.T) {
+	client := MustNew()
+	defer func() { _ = client.Close() }()
+	ctx := context.Background()
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "test.png")
+	p := &payload.TextPayload{Text: "save-test"}
+
+	err := client.Save(ctx, p, path)
+	if err != nil {
+		t.Fatalf("Save() error: %v", err)
+	}
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Error("Save() should create the file")
+	}
+}
+
+func TestSave_Subdirectory(t *testing.T) {
+	client := MustNew()
+	defer func() { _ = client.Close() }()
+	ctx := context.Background()
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "sub", "dir", "test.svg")
+	p := &payload.TextPayload{Text: "save-subdir"}
+
+	err := client.Save(ctx, p, path)
+	if err != nil {
+		t.Fatalf("Save() with subdirs error: %v", err)
+	}
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Error("Save() should create subdirectories")
+	}
+}
+
+func TestBatch(t *testing.T) {
+	client := MustNew(WithWorkerCount(2))
+	defer func() { _ = client.Close() }()
+	ctx := context.Background()
+
+	payloads := []payload.Payload{
+		&payload.TextPayload{Text: "item1"},
+		&payload.TextPayload{Text: "item2"},
+		&payload.TextPayload{Text: "item3"},
+	}
+	results, err := client.Batch(ctx, payloads)
+	if err != nil {
+		t.Fatalf("Batch() error: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	for i, qr := range results {
+		if qr == nil {
+			t.Errorf("result[%d] is nil", i)
+		}
+	}
+}
+
+func TestBatch_Empty(t *testing.T) {
+	client := MustNew()
+	defer func() { _ = client.Close() }()
+	results, err := client.Batch(context.Background(), nil)
+	if err != nil {
+		t.Error("Batch(nil) should not error")
+	}
+	if results != nil {
+		t.Errorf("Batch(nil) should return nil, got %v", results)
+	}
+}
+
+func TestSetOptions(t *testing.T) {
+	client := MustNew()
+	defer func() { _ = client.Close() }()
+
+	err := client.SetOptions(WithDefaultSize(512))
+	if err != nil {
+		t.Fatalf("SetOptions() error: %v", err)
+	}
+
+	// Invalid options should fail.
+	err = client.SetOptions(WithDefaultSize(50))
+	if err == nil {
+		t.Error("SetOptions() with invalid config should error")
+	}
+}
+
+func TestSetOptions_AfterClose(t *testing.T) {
+	client := MustNew()
+	_ = client.Close()
+	err := client.SetOptions(WithDefaultSize(512))
+	if err == nil {
+		t.Error("SetOptions() after Close() should error")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Quick helpers
+// ---------------------------------------------------------------------------
 
 func TestQuick(t *testing.T) {
-	data, err := Quick("Hello World")
+	data, err := Quick("hello world")
 	if err != nil {
-		t.Fatalf("Quick error: %v", err)
+		t.Fatalf("Quick() error: %v", err)
 	}
 	if len(data) == 0 {
-		t.Error("Quick returned empty data")
+		t.Error("Quick() returned empty data")
 	}
 }
 
-func TestQuickWithSize(t *testing.T) {
-	data, err := Quick("Hello", 512)
+func TestQuick_CustomSize(t *testing.T) {
+	data, err := Quick("test", 512)
 	if err != nil {
-		t.Fatalf("Quick error: %v", err)
+		t.Fatalf("Quick() error: %v", err)
 	}
 	if len(data) == 0 {
-		t.Error("Quick returned empty data")
+		t.Error("Quick(512) returned empty data")
 	}
 }
 
 func TestQuickSVG(t *testing.T) {
-	svg, err := QuickSVG("Hello World")
+	svg, err := QuickSVG("test")
 	if err != nil {
-		t.Fatalf("QuickSVG error: %v", err)
+		t.Fatalf("QuickSVG() error: %v", err)
 	}
 	if !strings.Contains(svg, "<svg") {
-		t.Error("QuickSVG should return SVG content")
+		t.Error("QuickSVG() should return SVG content")
 	}
 }
 
-func TestQuickWiFi(t *testing.T) {
-	data, err := QuickWiFi("MyNetwork", "password123", "WPA2")
+func TestQuickFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "quick.png")
+	err := QuickFile("file test", path, 256)
 	if err != nil {
-		t.Fatalf("QuickWiFi error: %v", err)
+		t.Fatalf("QuickFile() error: %v", err)
 	}
-	if len(data) == 0 {
-		t.Error("QuickWiFi returned empty data")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Error("QuickFile() should create file")
 	}
 }
 
 func TestQuickURL(t *testing.T) {
 	data, err := QuickURL("https://example.com")
 	if err != nil {
-		t.Fatalf("QuickURL error: %v", err)
+		t.Fatalf("QuickURL() error: %v", err)
 	}
 	if len(data) == 0 {
-		t.Error("QuickURL returned empty data")
+		t.Error("QuickURL() returned empty data")
 	}
 }
 
-func TestGeneratePNG(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
+func TestQuickWiFi(t *testing.T) {
+	data, err := QuickWiFi("MyNet", "password", "WPA2")
 	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	p, _ := payload.Text("Test PNG")
-	data, err := GeneratePNG(context.Background(), g, p)
-	if err != nil {
-		t.Fatalf("GeneratePNG error: %v", err)
+		t.Fatalf("QuickWiFi() error: %v", err)
 	}
 	if len(data) == 0 {
-		t.Error("GeneratePNG returned empty data")
-	}
-}
-
-func TestGenerateSVG(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	p, _ := payload.Text("Test SVG")
-	svg, err := GenerateSVG(context.Background(), g, p)
-	if err != nil {
-		t.Fatalf("GenerateSVG error: %v", err)
-	}
-	if !strings.Contains(svg, "<svg") {
-		t.Error("GenerateSVG should return SVG content")
-	}
-}
-
-func TestSavePNG(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	p, _ := payload.Text("Save Test")
-	tmpFile := filepath(t.TempDir(), "test.png")
-	err = SavePNG(context.Background(), g, p, tmpFile)
-	if err != nil {
-		t.Fatalf("SavePNG error: %v", err)
-	}
-	if _, err := os.Stat(tmpFile); os.IsNotExist(err) {
-		t.Error("SavePNG should create file")
-	}
-}
-
-func filepath(dir, name string) string {
-	return dir + string(os.PathSeparator) + name
-}
-
-func TestContextWithQR(t *testing.T) {
-	g, err := New()
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	ctx := ContextWithQR(context.Background(), g)
-	retrieved, ok := QRFromContext(ctx)
-	if !ok {
-		t.Error("QRFromContext should return true")
-	}
-	if retrieved == nil {
-		t.Error("QRFromContext should return non-nil")
-	}
-
-	// Missing context
-	_, ok = QRFromContext(context.Background())
-	if ok {
-		t.Error("QRFromContext should return false for missing context")
-	}
-}
-
-func TestBuilderQuickMethods(t *testing.T) {
-	// Test Builder.Quick
-	b := NewBuilder()
-	data, err := b.Quick("Hello Builder")
-	if err != nil {
-		t.Fatalf("Builder.Quick error: %v", err)
-	}
-	if len(data) == 0 {
-		t.Error("Builder.Quick returned empty data")
-	}
-
-	// Test Builder.QuickURL
-	data, err = b.QuickURL("https://example.com")
-	if err != nil {
-		t.Fatalf("Builder.QuickURL error: %v", err)
-	}
-	if len(data) == 0 {
-		t.Error("Builder.QuickURL returned empty data")
-	}
-
-	// Test Builder.QuickWiFi
-	data, err = b.QuickWiFi("SSID", "pass", "WPA2")
-	if err != nil {
-		t.Fatalf("Builder.QuickWiFi error: %v", err)
-	}
-	if len(data) == 0 {
-		t.Error("Builder.QuickWiFi returned empty data")
-	}
-
-	// Test Builder.QuickSVG
-	svg, err := b.QuickSVG("Hello SVG")
-	if err != nil {
-		t.Fatalf("Builder.QuickSVG error: %v", err)
-	}
-	if !strings.Contains(svg, "<svg") {
-		t.Error("Builder.QuickSVG should return SVG")
-	}
-
-	// Test Builder.QuickContact
-	data, err = b.QuickContact("John", "Doe", "555-1234", "john@example.com")
-	if err != nil {
-		t.Fatalf("Builder.QuickContact error: %v", err)
-	}
-	if len(data) == 0 {
-		t.Error("Builder.QuickContact returned empty data")
-	}
-
-	// Test Builder.QuickSMS
-	data, err = b.QuickSMS("+1234567890", "Hello")
-	if err != nil {
-		t.Fatalf("Builder.QuickSMS error: %v", err)
-	}
-	if len(data) == 0 {
-		t.Error("Builder.QuickSMS returned empty data")
-	}
-
-	// Test Builder.QuickEmail
-	data, err = b.QuickEmail("user@example.com", "Subject", "Body")
-	if err != nil {
-		t.Fatalf("Builder.QuickEmail error: %v", err)
-	}
-	if len(data) == 0 {
-		t.Error("Builder.QuickEmail returned empty data")
-	}
-
-	// Test Builder.QuickGeo
-	data, err = b.QuickGeo(37.77, -122.42)
-	if err != nil {
-		t.Fatalf("Builder.QuickGeo error: %v", err)
-	}
-	if len(data) == 0 {
-		t.Error("Builder.QuickGeo returned empty data")
-	}
-
-	// Test Builder.QuickEvent
-	data, err = b.QuickEvent("Meeting", "Office", time.Now(), time.Now().Add(2*time.Hour))
-	if err != nil {
-		t.Fatalf("Builder.QuickEvent error: %v", err)
-	}
-	if len(data) == 0 {
-		t.Error("Builder.QuickEvent returned empty data")
-	}
-}
-
-func TestGenerateASCII(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	p, _ := payload.Text("ASCII")
-	ascii, err := GenerateASCII(context.Background(), g, p)
-	if err != nil {
-		t.Fatalf("GenerateASCII error: %v", err)
-	}
-	if len(ascii) == 0 {
-		t.Error("GenerateASCII returned empty string")
-	}
-}
-
-func TestGenerateBase64(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	p, _ := payload.Text("Base64")
-	b64, err := GenerateBase64(context.Background(), g, p)
-	if err != nil {
-		t.Fatalf("GenerateBase64 error: %v", err)
-	}
-	if !strings.Contains(b64, "data:image/png;base64,") {
-		t.Error("GenerateBase64 should return data URL")
-	}
-}
-
-func TestGeneratorInterface(t *testing.T) {
-	g, err := New()
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	ctx := context.Background()
-	p, _ := payload.Text("Interface test")
-
-	// Test Generate
-	qr, err := g.Generate(ctx, p)
-	if err != nil {
-		t.Fatalf("Generate error: %v", err)
-	}
-	if qr == nil {
-		t.Error("Generate returned nil QRCode")
-	}
-
-	// Test Closed
-	if g.Closed() {
-		t.Error("generator should not be closed")
-	}
-}
-
-func TestExtensionFromPath(t *testing.T) {
-	tests := []struct {
-		path string
-		want string
-	}{
-		{"/path/to/file.png", ".png"},
-		{"/path/to/file.svg", ".svg"},
-		{"/path/to/file.PDF", ".pdf"},
-		{"/path/to/file", ""},
-	}
-
-	for _, tt := range tests {
-		got := extensionFromPath(tt.path)
-		if got != tt.want {
-			t.Errorf("extensionFromPath(%q) = %q, want %q", tt.path, got, tt.want)
-		}
+		t.Error("QuickWiFi() returned empty data")
 	}
 }
 
 func TestQuickContact(t *testing.T) {
-	data, err := QuickContact("John", "Doe", "555-1234", "john@example.com")
+	data, err := QuickContact("John", "Doe", "+1234", "john@doe.com")
 	if err != nil {
-		t.Fatalf("QuickContact error: %v", err)
+		t.Fatalf("QuickContact() error: %v", err)
 	}
 	if len(data) == 0 {
-		t.Error("QuickContact returned empty data")
+		t.Error("QuickContact() returned empty data")
 	}
 }
 
 func TestQuickSMS(t *testing.T) {
-	data, err := QuickSMS("+1234567890", "Hello SMS")
+	data, err := QuickSMS("+1234", "Hello")
 	if err != nil {
-		t.Fatalf("QuickSMS error: %v", err)
+		t.Fatalf("QuickSMS() error: %v", err)
 	}
 	if len(data) == 0 {
-		t.Error("QuickSMS returned empty data")
+		t.Error("QuickSMS() returned empty data")
+	}
+}
+
+func TestQuickEmail(t *testing.T) {
+	data, err := QuickEmail("to@example.com", "Subject", "Body")
+	if err != nil {
+		t.Fatalf("QuickEmail() error: %v", err)
+	}
+	if len(data) == 0 {
+		t.Error("QuickEmail() returned empty data")
+	}
+}
+
+func TestQuickGeo(t *testing.T) {
+	data, err := QuickGeo(37.7749, -122.4194)
+	if err != nil {
+		t.Fatalf("QuickGeo() error: %v", err)
+	}
+	if len(data) == 0 {
+		t.Error("QuickGeo() returned empty data")
+	}
+}
+
+func TestQuickEvent(t *testing.T) {
+	start := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 1, 15, 11, 0, 0, 0, time.UTC)
+	data, err := QuickEvent("Meeting", "Room 1", start, end)
+	if err != nil {
+		t.Fatalf("QuickEvent() error: %v", err)
+	}
+	if len(data) == 0 {
+		t.Error("QuickEvent() returned empty data")
 	}
 }
 
 func TestQuickPayment(t *testing.T) {
-	data, err := QuickPayment("user", "10.00")
+	data, err := QuickPayment("user@example.com", "25.00")
 	if err != nil {
-		t.Fatalf("QuickPayment error: %v", err)
+		t.Fatalf("QuickPayment() error: %v", err)
 	}
 	if len(data) == 0 {
-		t.Error("QuickPayment returned empty data")
+		t.Error("QuickPayment() returned empty data")
 	}
 }
 
-func TestBuilderBuildAndGeneratePNG(t *testing.T) {
-	b := NewBuilder().Size(200)
-	p, _ := payload.Text("BuildAndGenerate")
-	data, err := b.BuildAndGeneratePNG(context.Background(), p)
+// ---------------------------------------------------------------------------
+// Builder tests
+// ---------------------------------------------------------------------------
+
+func TestBuilder_Default(t *testing.T) {
+	b := NewBuilder()
+	client, err := b.Build()
 	if err != nil {
-		t.Fatalf("BuildAndGeneratePNG error: %v", err)
+		t.Fatalf("Builder.Build() error: %v", err)
 	}
-	if len(data) == 0 {
-		t.Error("BuildAndGeneratePNG returned empty data")
+	defer func() { _ = client.Close() }()
+}
+
+func TestBuilder_WithOptions(t *testing.T) {
+	b := NewBuilder().Size(512).ErrorCorrection(LevelH).Margin(8)
+	client, err := b.Build()
+	if err != nil {
+		t.Fatalf("Builder.Build() error: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+}
+
+func TestBuilder_MustBuild(t *testing.T) {
+	b := NewBuilder()
+	client := b.MustBuild()
+	defer func() { _ = client.Close() }()
+	if client == nil {
+		t.Fatal("MustBuild() returned nil")
 	}
 }
 
-func TestBuilderBuildAndGenerateSVG(t *testing.T) {
-	b := NewBuilder().Size(200)
-	p, _ := payload.Text("BuildAndGenerate")
-	svg, err := b.BuildAndGenerateSVG(context.Background(), p)
+func TestBuilder_MustBuild_Panics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("MustBuild should panic on invalid config")
+		}
+	}()
+	NewBuilder().Size(50).MustBuild()
+}
+
+func TestBuilder_Clone(t *testing.T) {
+	b := NewBuilder().Size(512)
+	clone := b.Clone()
+	if clone == b {
+		t.Error("Clone should return a new pointer")
+	}
+	clone.Size(1024)
+	// Original should not be affected (builders accumulate options).
+	_ = clone
+}
+
+func TestBuilder_Quick(t *testing.T) {
+	b := NewBuilder()
+	data, err := b.Quick("test")
 	if err != nil {
-		t.Fatalf("BuildAndGenerateSVG error: %v", err)
+		t.Fatalf("Builder.Quick() error: %v", err)
+	}
+	if len(data) == 0 {
+		t.Error("Builder.Quick() returned empty data")
+	}
+}
+
+func TestBuilder_QuickSVG(t *testing.T) {
+	b := NewBuilder()
+	svg, err := b.QuickSVG("test")
+	if err != nil {
+		t.Fatalf("Builder.QuickSVG() error: %v", err)
 	}
 	if !strings.Contains(svg, "<svg") {
-		t.Error("BuildAndGenerateSVG should return SVG")
+		t.Error("Builder.QuickSVG() should return SVG content")
 	}
 }
 
-func TestBuilderQuickFile(t *testing.T) {
-	b := NewBuilder().Size(200)
-	tmpDir := t.TempDir()
-	tmpFile := tmpDir + "/test_quick.png"
-	err := b.QuickFile("Quick File Test", tmpFile)
+func TestBuilder_FluentChain(t *testing.T) {
+	client, err := NewBuilder().
+		Size(512).
+		ErrorCorrection(LevelQ).
+		Margin(8).
+		ForegroundColor("#FF0000").
+		BackgroundColor("#FFFFFF").
+		WorkerCount(8).
+		Build()
 	if err != nil {
-		t.Fatalf("QuickFile error: %v", err)
+		t.Fatalf("fluent build error: %v", err)
 	}
-	if _, err := os.Stat(tmpFile); os.IsNotExist(err) {
-		t.Error("QuickFile should create file")
+	defer func() { _ = client.Close() }()
+}
+
+// ---------------------------------------------------------------------------
+// Context helpers
+// ---------------------------------------------------------------------------
+
+func TestContextWithQR(t *testing.T) {
+	client := MustNew()
+	defer func() { _ = client.Close() }()
+	ctx := ContextWithQR(context.Background(), client)
+
+	retrieved, ok := QRFromContext(ctx)
+	if !ok {
+		t.Fatal("QRFromContext should find the client")
+	}
+	if retrieved != client {
+		t.Error("retrieved client should match the stored client")
 	}
 }
 
-func TestQuickFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	tmpFile := tmpDir + "/test_quick2.png"
-	err := QuickFile("Quick File Test", tmpFile)
-	if err != nil {
-		t.Fatalf("QuickFile error: %v", err)
-	}
-	if _, err := os.Stat(tmpFile); os.IsNotExist(err) {
-		t.Error("QuickFile should create file")
+func TestQRFromContext_Missing(t *testing.T) {
+	_, ok := QRFromContext(context.Background())
+	if ok {
+		t.Error("QRFromContext should return false for empty context")
 	}
 }
 
-func TestSave(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
+// ---------------------------------------------------------------------------
+// Options tests
+// ---------------------------------------------------------------------------
 
-	p, _ := payload.Text("Save Test")
-
-	// Save as PNG
-	tmpDir := t.TempDir()
-	tmpFile := tmpDir + "/save_test.png"
-	err = Save(context.Background(), g, p, tmpFile)
-	if err != nil {
-		t.Fatalf("Save PNG error: %v", err)
-	}
-
-	// Save as SVG
-	tmpFile2 := tmpDir + "/save_test.svg"
-	err = Save(context.Background(), g, p, tmpFile2)
-	if err != nil {
-		t.Fatalf("Save SVG error: %v", err)
-	}
-
-	// Read and check SVG content
-	svgData, _ := os.ReadFile(tmpFile2)
-	if !strings.Contains(string(svgData), "<svg") {
-		t.Error("saved SVG should contain <svg>")
-	}
-}
-
-func TestGeneratorBatchEmpty(t *testing.T) {
-	g, err := New()
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	results, err := g.Batch(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("Batch error: %v", err)
-	}
-	if len(results) != 0 {
-		t.Error("empty batch should return nil results")
-	}
-}
-
-func TestGenerateToWriter(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	p, _ := payload.Text("Writer test")
-
-	var buf bytes.Buffer
-	err = g.GenerateToWriter(context.Background(), p, &buf, FormatPNG)
-	if err != nil {
-		t.Fatalf("GenerateToWriter error: %v", err)
-	}
-	if buf.Len() == 0 {
-		t.Error("GenerateToWriter should write data")
-	}
-}
-
-func TestGenerateToWriterMultipleFormats(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	p, _ := payload.Text("Format test")
-
-	formats := []Format{FormatPNG, FormatSVG, FormatTerminal, FormatPDF, FormatBase64}
-	for _, f := range formats {
-		var buf bytes.Buffer
-		err := g.GenerateToWriter(context.Background(), p, &buf, f)
-		if err != nil {
-			t.Errorf("GenerateToWriter format %d error: %v", f, err)
-		}
-		if buf.Len() == 0 {
-			t.Errorf("GenerateToWriter format %d should write data", f)
-		}
-	}
-}
-
-func TestGenerateWithOptions(t *testing.T) {
-	g, err := New(WithDefaultSize(200), WithErrorCorrection(LevelM))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	p, _ := payload.Text("WithOptions test")
-
-	// Override to LevelH
-	qr, err := g.GenerateWithOptions(context.Background(), p, WithErrorCorrection(LevelH))
-	if err != nil {
-		t.Fatalf("GenerateWithOptions error: %v", err)
-	}
-	if qr == nil {
-		t.Error("GenerateWithOptions returned nil")
-	}
-}
-
-func TestGenerateToWriterSVG(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	p, _ := payload.Text("SVG writer test")
-	var buf bytes.Buffer
-	err = g.GenerateToWriter(context.Background(), p, &buf, FormatSVG)
-	if err != nil {
-		t.Fatalf("GenerateToWriter SVG error: %v", err)
-	}
-	if !strings.Contains(buf.String(), "<svg") {
-		t.Error("SVG writer should output SVG content")
-	}
-}
-
-func TestGenerateToWriterBase64(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	p, _ := payload.Text("Base64 writer test")
-	var buf bytes.Buffer
-	err = g.GenerateToWriter(context.Background(), p, &buf, FormatBase64)
-	if err != nil {
-		t.Fatalf("GenerateToWriter Base64 error: %v", err)
-	}
-	if !strings.Contains(buf.String(), "data:image/png;base64,") {
-		t.Error("Base64 writer should output data URL")
-	}
-}
-
-func TestGeneratorSetOptions(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	// Change size
-	err = g.SetOptions(WithDefaultSize(400))
-	if err != nil {
-		t.Fatalf("SetOptions error: %v", err)
-	}
-
-	// Invalid option should fail
-	if err := g.SetOptions(WithDefaultSize(50)); err == nil {
-		t.Error("SetOptions should fail for invalid size")
-	}
-}
-
-func TestGeneratorSetOptionsAfterClose(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	g.Close(context.Background())
-
-	if err := g.SetOptions(WithDefaultSize(300)); err == nil {
-		t.Error("SetOptions should fail after Close")
-	}
-}
-
-func TestGeneratorBatchNonEmpty(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	p1, _ := payload.Text("Batch1")
-	p2, _ := payload.Text("Batch2")
-	p3, _ := payload.URL("https://example.com")
-
-	results, err := g.Batch(context.Background(), []payload.Payload{p1, p2, p3})
-	if err != nil {
-		t.Fatalf("Batch error: %v", err)
-	}
-	if len(results) != 3 {
-		t.Fatalf("Batch should return 3 results, got %d", len(results))
-	}
-	for i, qr := range results {
-		if qr == nil {
-			t.Errorf("results[%d] is nil", i)
-		}
-	}
-}
-
-func TestGeneratorBatchWithOptions(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	p1, _ := payload.Text("A")
-	p2, _ := payload.Text("B")
-	results, err := g.Batch(context.Background(), []payload.Payload{p1, p2},
-		WithErrorCorrection(LevelQ),
-	)
-	if err != nil {
-		t.Fatalf("Batch with options error: %v", err)
-	}
-	if len(results) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(results))
-	}
-}
-
-func TestGeneratorGenerateAfterClose(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	g.Close(context.Background())
-
-	if !g.Closed() {
-		t.Error("Closed() should return true after Close()")
-	}
-
-	p, _ := payload.Text("After close")
-	_, err = g.Generate(context.Background(), p)
-	if err == nil {
-		t.Error("Generate should fail after Close")
-	}
-}
-
-func TestGeneratorGenerateWithOptionsInvalid(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	p, _ := payload.Text("Test")
-	_, err = g.GenerateWithOptions(context.Background(), p, WithDefaultSize(50))
-	if err == nil {
-		t.Error("GenerateWithOptions should fail for invalid per-call size")
-	}
-}
-
-func TestGeneratorSetOptionsMultiple(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
-	}
-	defer g.Close(context.Background())
-
-	// Set multiple valid options
-	err = g.SetOptions(
-		WithDefaultSize(300),
-		WithErrorCorrection(LevelQ),
-		WithQuietZone(4),
+func TestAllOptions(t *testing.T) {
+	cfg := defaultConfig()
+	opts := []Option{
+		WithVersion(5),
+		WithMinVersion(2),
+		WithMaxVersion(20),
+		WithErrorCorrection(LevelH),
+		WithAutoSize(false),
+		WithWorkerCount(16),
+		WithQueueSize(2048),
+		WithDefaultFormat(FormatSVG),
+		WithDefaultSize(1024),
+		WithQuietZone(10),
 		WithForegroundColor("#FF0000"),
-		WithBackgroundColor("#FFFFFF"),
-	)
-	if err != nil {
-		t.Fatalf("SetOptions error: %v", err)
+		WithBackgroundColor("#00FF00"),
+		WithMaskPattern(3),
+		WithLogo("logo.png", 0.25),
+		WithLogoOverlay(true),
+		WithLogoTint("#0000FF"),
+		WithPrefix("qr_"),
+		WithSlowOperation(200 * time.Millisecond),
 	}
-
-	// Verify generation still works
-	p, _ := payload.Text("WithOptions")
-	qr, err := g.Generate(context.Background(), p)
-	if err != nil {
-		t.Fatalf("Generate after SetOptions error: %v", err)
+	for _, opt := range opts {
+		opt(cfg)
 	}
-	if qr == nil {
-		t.Error("Generate should return non-nil after SetOptions")
+	if cfg.DefaultVersion != 5 {
+		t.Errorf("Version = %d", cfg.DefaultVersion)
 	}
-}
-
-func TestGeneratorSetOptionsInvalidWorkerCount(t *testing.T) {
-	g, err := New(WithDefaultSize(200))
-	if err != nil {
-		t.Fatalf("New error: %v", err)
+	if cfg.MaxVersion != 20 {
+		t.Errorf("MaxVersion = %d", cfg.MaxVersion)
 	}
-	defer g.Close(context.Background())
-
-	err = g.SetOptions(WithWorkerCount(0))
-	if err == nil {
-		t.Error("SetOptions should fail for worker count 0")
+	if cfg.WorkerCount != 16 {
+		t.Errorf("WorkerCount = %d", cfg.WorkerCount)
 	}
-}
-
-func TestGenerateWithDifferentECLevels(t *testing.T) {
-	levels := []ErrorCorrectionLevel{LevelL, LevelM, LevelQ, LevelH}
-	for _, level := range levels {
-		t.Run(level.String(), func(t *testing.T) {
-			g, err := New(WithDefaultSize(200), WithErrorCorrection(level))
-			if err != nil {
-				t.Fatalf("New error: %v", err)
-			}
-			defer g.Close(context.Background())
-
-			p, _ := payload.Text("EC Level " + level.String())
-			qr, err := g.Generate(context.Background(), p)
-			if err != nil {
-				t.Fatalf("Generate error: %v", err)
-			}
-			if qr == nil {
-				t.Error("Generate returned nil")
-			}
-		})
+	if cfg.DefaultSize != 1024 {
+		t.Errorf("DefaultSize = %d", cfg.DefaultSize)
 	}
-}
-
-func TestNewWithVariousOptions(t *testing.T) {
-	tests := []struct {
-		name string
-		opts []Option
-	}{
-		{name: "with version", opts: []Option{WithVersion(5)}},
-		{name: "with auto size", opts: []Option{WithAutoSize(true)}},
-		{name: "with colors", opts: []Option{WithForegroundColor("#000"), WithBackgroundColor("#FFF")}},
-		{name: "with quiet zone", opts: []Option{WithQuietZone(5)}},
-		{name: "with mask pattern", opts: []Option{WithMaskPattern(3)}},
-		{name: "with format svg", opts: []Option{WithDefaultFormat(FormatSVG)}},
-		{name: "with queue size", opts: []Option{WithQueueSize(100)}},
-		{name: "with version range", opts: []Option{WithMinVersion(1), WithMaxVersion(10)}},
-		{name: "with concurrency", opts: []Option{WithConcurrency(4)}},
-		{name: "with prefix", opts: []Option{WithPrefix("https://example.com/")}},
-		{name: "with slow operation", opts: []Option{WithSlowOperation(5 * time.Second)}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g, err := New(tt.opts...)
-			if err != nil {
-				t.Fatalf("New(%v) error: %v", tt.name, err)
-			}
-			defer g.Close(context.Background())
-			if g == nil {
-				t.Fatal("expected non-nil generator")
-			}
-		})
+	if cfg.LogoOverlay != true {
+		t.Error("LogoOverlay should be true")
 	}
 }

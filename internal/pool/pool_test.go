@@ -7,60 +7,68 @@ import (
 func TestNewBufferPool(t *testing.T) {
 	p := NewBufferPool()
 	if p == nil {
-		t.Fatal("NewBufferPool returned nil")
+		t.Fatal("NewBufferPool() returned nil")
 	}
 }
 
-func TestGetPut(t *testing.T) {
+func TestGet_ReturnsResetBuffer(t *testing.T) {
 	p := NewBufferPool()
-
-	b := p.Get()
-	if b == nil {
-		t.Fatal("Get returned nil")
+	buf := p.Get()
+	if buf == nil {
+		t.Fatal("Get() returned nil")
 	}
-	if b.Len() != 0 {
-		t.Error("Get should return empty buffer")
+	// Write some data.
+	buf.WriteString("test data")
+	if buf.Len() != 9 {
+		t.Fatalf("buffer should have 9 bytes, got %d", buf.Len())
 	}
-
-	b.WriteString("hello world")
-
-	// Put it back
-	p.Put(b)
-
-	// Get again - should reuse
-	b2 := p.Get()
-	if b2 == nil {
-		t.Fatal("second Get returned nil")
+	// Return to pool and get again — should be reset.
+	p.Put(buf)
+	buf2 := p.Get()
+	if buf2.Len() != 0 {
+		t.Errorf("buffer from pool should be reset, got %d bytes", buf2.Len())
 	}
-	if b2.Len() != 0 {
-		t.Error("Get after Put should return empty buffer")
-	}
+}
 
-	// Put nil should not panic
+func TestPut_Nil(t *testing.T) {
+	p := NewBufferPool()
+	// Put(nil) should not panic.
 	p.Put(nil)
+	buf := p.Get()
+	if buf == nil {
+		t.Fatal("Get() after Put(nil) should still work")
+	}
 }
 
-func TestMultipleGetPut(t *testing.T) {
+func TestGetPut_Capacity(t *testing.T) {
 	p := NewBufferPool()
-
-	// Get multiple buffers
-	b1 := p.Get()
-	b2 := p.Get()
-
-	b1.WriteString("buffer1")
-	b2.WriteString("buffer2")
-
-	if b1.String() != "buffer1" || b2.String() != "buffer2" {
-		t.Error("buffers should be independent")
+	buf1 := p.Get()
+	// Write beyond initial capacity to force growth.
+	for i := 0; i < 2048; i++ {
+		buf1.WriteByte('x')
 	}
-
-	p.Put(b1)
-	p.Put(b2)
-
-	// Verify they're properly reset
-	b3 := p.Get()
-	if b3.Len() != 0 {
-		t.Error("buffer should be empty after recycling")
+	if buf1.Cap() <= 1024 {
+		t.Errorf("expected capacity > 1024 after writes, got %d", buf1.Cap())
 	}
-	p.Put(b3)
+	p.Put(buf1)
+	// The next Get may reuse the grown buffer.
+	buf2 := p.Get()
+	_ = buf2 // Just ensure it works without panicking.
+}
+
+func TestConcurrentGetPut(t *testing.T) {
+	p := NewBufferPool()
+	done := make(chan struct{})
+	for i := 0; i < 50; i++ {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			buf := p.Get()
+			buf.WriteString("concurrent write")
+			_ = buf.Len()
+			p.Put(buf)
+		}()
+	}
+	for i := 0; i < 50; i++ {
+		<-done
+	}
 }

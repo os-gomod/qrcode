@@ -1,125 +1,140 @@
 package singleflight
 
 import (
+	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
-func TestNewGroup(t *testing.T) {
+func TestDo_Basic(t *testing.T) {
 	g := NewGroup()
-	if g == nil {
-		t.Fatal("NewGroup returned nil")
-	}
-}
-
-func TestDoBasic(t *testing.T) {
-	g := NewGroup()
-
 	val, shared, err := g.Do("key1", func() (any, error) {
 		return "result1", nil
 	})
 	if err != nil {
-		t.Fatalf("Do error: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if val != "result1" {
-		t.Errorf("val = %v, want result1", val)
+		t.Errorf("expected 'result1', got %v", val)
 	}
 	if shared {
 		t.Error("first call should not be shared")
 	}
 }
 
-func TestDoSequential(t *testing.T) {
+func TestDo_Error(t *testing.T) {
 	g := NewGroup()
-
-	// First call
-	val1, _, err1 := g.Do("key1", func() (any, error) {
-		return "first", nil
+	expectedErr := errors.New("call failed")
+	_, _, err := g.Do("key2", func() (any, error) {
+		return nil, expectedErr
 	})
-	if err1 != nil || val1 != "first" {
-		t.Fatalf("first call: val=%v err=%v", val1, err1)
-	}
-
-	// Second call (sequential, not concurrent)
-	val2, shared2, err2 := g.Do("key1", func() (any, error) {
-		return "second", nil
-	})
-	if err2 != nil {
-		t.Fatalf("second call error: %v", err2)
-	}
-	_ = shared2
-	if val2 != "second" {
-		t.Errorf("second call val = %v, want second", val2)
+	if err != expectedErr {
+		t.Errorf("expected %v, got %v", expectedErr, err)
 	}
 }
 
-func TestDoError(t *testing.T) {
+func TestDo_Dedup(t *testing.T) {
 	g := NewGroup()
+	var calls int32
+	var wg sync.WaitGroup
 
-	_, shared, err := g.Do("errkey", func() (any, error) {
-		return nil, &testError{}
-	})
-
-	if err == nil {
-		t.Fatal("expected error, got nil")
+	fn := func() (any, error) {
+		atomic.AddInt32(&calls, 1)
+		time.Sleep(50 * time.Millisecond) // Simulate slow work.
+		return "deduped", nil
 	}
-	if shared {
-		t.Error("error call should not be shared")
+
+	results := make([]struct {
+		val    any
+		shared bool
+		err    error
+	}, 5)
+
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			val, shared, err := g.Do("dedup-key", fn)
+			results[idx] = struct {
+				val    any
+				shared bool
+				err    error
+			}{val, shared, err}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// fn should be called exactly once due to deduplication.
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Errorf("expected 1 call, got %d", atomic.LoadInt32(&calls))
+	}
+
+	// All results should have the same value.
+	for i, r := range results {
+		if r.val != "deduped" {
+			t.Errorf("result[%d] = %v, want 'deduped'", i, r.val)
+		}
+		if r.err != nil {
+			t.Errorf("result[%d] error = %v", i, r.err)
+		}
+	}
+
+	// At least 4 should be shared (some may not be due to timing).
+	sharedCount := 0
+	for _, r := range results {
+		if r.shared {
+			sharedCount++
+		}
+	}
+	if sharedCount < 4 {
+		t.Errorf("expected at least 4 shared, got %d", sharedCount)
+	}
+}
+
+func TestDo_DifferentKeys(t *testing.T) {
+	g := NewGroup()
+	v1, _, _ := g.Do("keyA", func() (any, error) { return "A", nil })
+	v2, _, _ := g.Do("keyB", func() (any, error) { return "B", nil })
+	if v1 != "A" || v2 != "B" {
+		t.Errorf("different keys should call fn independently: %v, %v", v1, v2)
 	}
 }
 
 func TestForget(t *testing.T) {
 	g := NewGroup()
+	g.Forget("nonexistent") // Should not panic.
 
-	g.Do("key1", func() (any, error) {
-		return "result", nil
-	})
+	_, _, _ = g.Do("forget-key", func() (any, error) { return "val", nil })
+	g.Forget("forget-key")
 
-	g.Forget("key1")
-	// After forget, a new call should execute the function again
-	calls := 0
-	val, _, err := g.Do("key1", func() (any, error) {
-		calls++
-		return "result2", nil
+	// After Forget, a new call should execute fn again.
+	var calls int32
+	_, _, _ = g.Do("forget-key", func() (any, error) {
+		atomic.AddInt32(&calls, 1)
+		return "new-val", nil
 	})
-	if err != nil {
-		t.Fatalf("Do error: %v", err)
-	}
-	if calls != 1 {
-		t.Errorf("expected 1 call after Forget, got %d", calls)
-	}
-	if val != "result2" {
-		t.Errorf("val = %v, want result2", val)
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Errorf("expected fn to be called again after Forget, got %d calls", atomic.LoadInt32(&calls))
 	}
 }
 
 func TestDoChan(t *testing.T) {
 	g := NewGroup()
-
-	ch := g.DoChan("chankey", func() (any, error) {
-		return "chan_result", nil
+	ch := g.DoChan("chan-key", func() (any, error) {
+		return "chan-result", nil
 	})
-
-	result := <-ch
-	if result.Err != nil {
-		t.Fatalf("DoChan error: %v", result.Err)
-	}
-	if result.Val != "chan_result" {
-		t.Errorf("Val = %v", result.Val)
-	}
-}
-
-func TestDoMultipleKeys(t *testing.T) {
-	g := NewGroup()
-
-	v1, _, _ := g.Do("a", func() (any, error) { return 1, nil })
-	v2, _, _ := g.Do("b", func() (any, error) { return 2, nil })
-	v3, _, _ := g.Do("c", func() (any, error) { return 3, nil })
-
-	if v1 != 1 || v2 != 2 || v3 != 3 {
-		t.Errorf("expected 1,2,3 got %v,%v,%v", v1, v2, v3)
+	select {
+	case result := <-ch:
+		if result.Val != "chan-result" {
+			t.Errorf("expected 'chan-result', got %v", result.Val)
+		}
+		if result.Err != nil {
+			t.Errorf("unexpected error: %v", result.Err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("DoChan() timed out")
 	}
 }
-
-type testError struct{}
-
-func (e *testError) Error() string { return "test error" }

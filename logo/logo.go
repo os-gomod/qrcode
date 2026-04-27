@@ -1,21 +1,8 @@
-// Package logo provides image loading, resizing, tinting, and overlay compositing
-// for QR code center logo images.
-//
-// The package supports PNG, JPEG, and GIF formats and exposes both a
-// [Processor] type for fluent logo manipulation and standalone functions
-// for individual operations.
-//
-// # Typical Pipeline
-//
-//	proc := logo.New("logo.png", 0.25).WithTint(color.RGBA{0, 0, 0, 255})
-//	img, err := proc.Load()
-//	resized := logo.ResizeLogo(img, qrModules, 0.25)
-//	tinted := logo.TintLogo(resized, color.RGBA{0, 0, 0, 255})
-//	final := logo.OverlayLogo(qrImage, tinted, qrModules)
 package logo
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -26,19 +13,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	// Image format decoders registered via init().
-	_ "image/gif"
-	_ "image/jpeg"
+	_ "image/gif"  // register GIF decoder
+	_ "image/jpeg" // register JPEG decoder
 )
 
-// SupportedFormats returns the list of supported image file extensions
-// (including the leading dot).
 func SupportedFormats() []string {
 	return []string{".png", ".jpg", ".jpeg", ".gif"}
 }
 
-// IsSupportedFormat reports whether the file extension (with or without a
-// leading dot) is a supported image format. The check is case-insensitive.
 func IsSupportedFormat(ext string) bool {
 	lower := strings.ToLower(ext)
 	for _, f := range SupportedFormats() {
@@ -49,19 +31,12 @@ func IsSupportedFormat(ext string) bool {
 	return false
 }
 
-// Processor loads and manipulates a logo image for QR code overlay.
-//
-// Create a Processor with [New] and optionally chain [Processor.WithTint].
-// Use [Processor.Load] to read the image from disk.
 type Processor struct {
 	source    string
 	sizeRatio float64
 	tint      color.Color
 }
 
-// New creates a new Processor for the logo at source with the given size
-// ratio. The sizeRatio determines how much of the QR code the logo will
-// occupy (e.g., 0.25 = 25%).
 func New(source string, sizeRatio float64) *Processor {
 	return &Processor{
 		source:    source,
@@ -69,31 +44,21 @@ func New(source string, sizeRatio float64) *Processor {
 	}
 }
 
-// WithTint sets a color tint to be applied during processing. Returns the
-// receiver for method chaining. Pass nil to clear any previously set tint.
 func (p *Processor) WithTint(c color.Color) *Processor {
 	p.tint = c
 	return p
 }
-
-// Source returns the logo source file path.
-func (p *Processor) Source() string { return p.source }
-
-// SizeRatio returns the logo size ratio as a fraction of the QR code size.
+func (p *Processor) Source() string     { return p.source }
 func (p *Processor) SizeRatio() float64 { return p.sizeRatio }
-
-// Load reads and decodes the logo image from the source path.
-// Returns an error if the source is empty, the file cannot be opened,
-// or the image format cannot be decoded.
 func (p *Processor) Load() (image.Image, error) {
 	if p.source == "" {
-		return nil, fmt.Errorf("logo: source path is empty")
+		return nil, errors.New("logo: source path is empty")
 	}
 	f, err := os.Open(p.source)
 	if err != nil {
 		return nil, fmt.Errorf("logo: failed to open %q: %w", p.source, err)
 	}
-	defer f.Close() //nolint:errcheck // file.Close error is not actionable in this context
+	defer func() { _ = f.Close() }()
 	img, _, err := image.Decode(f)
 	if err != nil {
 		return nil, fmt.Errorf("logo: failed to decode %q: %w", p.source, err)
@@ -101,11 +66,9 @@ func (p *Processor) Load() (image.Image, error) {
 	return img, nil
 }
 
-// LoadFromBytes decodes an image from raw bytes. Supports PNG, JPEG,
-// and GIF formats via Go's standard image decoders.
 func LoadFromBytes(data []byte) (image.Image, error) {
 	if len(data) == 0 {
-		return nil, fmt.Errorf("logo: empty data")
+		return nil, errors.New("logo: empty data")
 	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
@@ -114,8 +77,6 @@ func LoadFromBytes(data []byte) (image.Image, error) {
 	return img, nil
 }
 
-// LoadFromReader decodes an image from an [io.Reader]. Supports PNG,
-// JPEG, and GIF formats via Go's standard image decoders.
 func LoadFromReader(r io.Reader) (image.Image, error) {
 	img, _, err := image.Decode(r)
 	if err != nil {
@@ -124,9 +85,6 @@ func LoadFromReader(r io.Reader) (image.Image, error) {
 	return img, nil
 }
 
-// ResizeLogo resizes the logo to fit within the QR code based on the
-// ratio of the QR module count. The aspect ratio of the original image
-// is preserved. The result is an *image.RGBA.
 func ResizeLogo(img image.Image, qrModules int, ratio float64) *image.RGBA {
 	bounds := img.Bounds()
 	origW := bounds.Dx()
@@ -153,13 +111,10 @@ func ResizeLogo(img image.Image, qrModules int, ratio float64) *image.RGBA {
 	return bilinearResize(img, bounds, origW, origH, w, h)
 }
 
-// bilinearResize performs nearest-neighbor resampling of img into a new
-// w×h *image.RGBA. It is the shared implementation for ResizeLogo and
-// ResizeLogoToPixels.
 func bilinearResize(img image.Image, bounds image.Rectangle, origW, origH, w, h int) *image.RGBA {
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			srcX := bounds.Min.X + int(float64(x)*float64(origW)/float64(w))
 			srcY := bounds.Min.Y + int(float64(y)*float64(origH)/float64(h))
 			dst.Set(x, y, img.At(srcX, srcY))
@@ -168,8 +123,6 @@ func bilinearResize(img image.Image, bounds image.Rectangle, origW, origH, w, h 
 	return dst
 }
 
-// ResizeLogoToPixels resizes the logo to the exact pixel dimensions
-// specified by width and height. Values less than 1 are clamped to 1.
 func ResizeLogoToPixels(img image.Image, width, height int) *image.RGBA {
 	if width < 1 {
 		width = 1
@@ -183,9 +136,6 @@ func ResizeLogoToPixels(img image.Image, width, height int) *image.RGBA {
 	return bilinearResize(img, bounds, origW, origH, width, height)
 }
 
-// TintLogo applies a multiplicative color tint to the logo image.
-// Each pixel's RGBA components are multiplied with the corresponding
-// tint components. Pass nil for tint to simply clone the image.
 func TintLogo(img image.Image, tint color.Color) *image.RGBA {
 	if tint == nil {
 		return CloneToRGBA(img)
@@ -211,9 +161,6 @@ func TintLogo(img image.Image, tint color.Color) *image.RGBA {
 	return dst
 }
 
-// OverlayLogo composites the logo onto the center of the QR code image
-// using alpha blending. The QR code image is used as the base and the
-// logo is drawn on top. Returns a new *image.RGBA with the composited result.
 func OverlayLogo(qrImage, logoImg image.Image, _ int) *image.RGBA {
 	qrBounds := qrImage.Bounds()
 	dst := image.NewRGBA(qrBounds)
@@ -228,9 +175,6 @@ func OverlayLogo(qrImage, logoImg image.Image, _ int) *image.RGBA {
 	return dst
 }
 
-// CloneToRGBA copies any image into a new *image.RGBA using source-over
-// compositing. This is useful for normalizing image types before further
-// processing.
 func CloneToRGBA(img image.Image) *image.RGBA {
 	bounds := img.Bounds()
 	dst := image.NewRGBA(bounds)
@@ -238,8 +182,6 @@ func CloneToRGBA(img image.Image) *image.RGBA {
 	return dst
 }
 
-// EncodePNG encodes an image as PNG bytes suitable for writing to
-// a file or sending in an HTTP response.
 func EncodePNG(img image.Image) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
@@ -248,11 +190,9 @@ func EncodePNG(img image.Image) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Validate checks that the logo file at path exists, is a regular file
-// (not a directory), and has a supported image format extension.
 func Validate(path string) error {
 	if path == "" {
-		return fmt.Errorf("logo: path is empty")
+		return errors.New("logo: path is empty")
 	}
 	ext := filepath.Ext(path)
 	if !IsSupportedFormat(ext) {
@@ -268,10 +208,6 @@ func Validate(path string) error {
 	return nil
 }
 
-// LogoSize calculates the logo pixel size from the QR code pixel size
-// and the desired ratio. The result is clamped to a minimum of 1.
-//
-//nolint:revive // stutter: LogoSize is the canonical name for this function
 func LogoSize(qrPixelSize int, ratio float64) int {
 	size := int(float64(qrPixelSize) * ratio)
 	if size < 1 {

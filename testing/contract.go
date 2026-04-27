@@ -4,17 +4,12 @@ import (
 	"context"
 	"testing"
 
-	qrcode "github.com/os-gomod/qrcode"
-	"github.com/os-gomod/qrcode/encoding"
-	"github.com/os-gomod/qrcode/payload"
+	qrcode "github.com/os-gomod/qrcode/v2"
+	"github.com/os-gomod/qrcode/v2/internal/encoding"
+	"github.com/os-gomod/qrcode/v2/payload"
 )
 
-// GeneratorContractTest runs a suite of contract tests on a QR code Generator.
-//
-// It validates TextPayload and WiFiPayload generation, error handling for
-// invalid payloads, options passthrough (error correction level), writer
-// output, and proper Close lifecycle behavior.
-func GeneratorContractTest(t *testing.T, gen qrcode.Generator) {
+func ClientContractTest(t *testing.T, gen qrcode.Client) {
 	t.Helper()
 	ctx := context.Background()
 	t.Run("TextPayload", func(t *testing.T) {
@@ -78,13 +73,13 @@ func GeneratorContractTest(t *testing.T, gen qrcode.Generator) {
 	})
 	t.Run("Closed", func(t *testing.T) {
 		t.Helper()
-		AssertFalse(t, gen.Closed(), "generator should not be closed before Close()")
+		AssertFalse(t, gen.Closed(), "client should not be closed before Close()")
 	})
 	t.Run("Close", func(t *testing.T) {
 		t.Helper()
-		err := gen.Close(ctx)
+		err := gen.Close()
 		AssertNoError(t, err)
-		AssertTrue(t, gen.Closed(), "generator should be closed after Close()")
+		AssertTrue(t, gen.Closed(), "client should be closed after Close()")
 		p := &payload.TextPayload{Text: "after-close"}
 		_, err = gen.Generate(ctx, p)
 		AssertTrue(t, err != nil, "expected error when generating after Close()")
@@ -100,9 +95,6 @@ func (w *byteSliceWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// QRCodeIsValid checks that the QR code matrix is well-formed, verifying
-// that Version (1–40), Size (≥ 21), ECLevel (0–3), MaskPattern (0–7),
-// and the Modules matrix dimensions are all valid.
 func QRCodeIsValid(t *testing.T, qr *encoding.QRCode) {
 	t.Helper()
 	AssertTrue(t, qr != nil, "QRCode must not be nil")

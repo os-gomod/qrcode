@@ -1,43 +1,37 @@
 package qrcode
 
 import (
+	"errors"
 	"fmt"
 	"time"
 )
 
-// Config holds all configuration parameters for the QR code generator.
-// Config is typically constructed implicitly through functional Option values
-// passed to New or NewBuilder, but can also be manipulated directly for
-// advanced use cases such as merging presets.
-//
-// The zero-value Config is not valid; use defaultConfig (via New) to obtain
-// a Config with sensible defaults, then apply Option overrides.
-//
-//	cfg := qrcode.defaultConfig() // internal; use qrcode.New() instead
-//	qrcode.WithErrorCorrection(qrcode.LevelH)(cfg)
+// Config holds all configuration for QR code generation.
+// Fields use value types (not pointers) for straightforward usage.
+// To selectively override specific fields without zero-value ambiguity,
+// use ConfigPatch with ApplyPatch.
 type Config struct {
-	DefaultVersion  int           `json:"default_version"`  // QR version (1–40); 0 means auto-select
-	DefaultECLevel  string        `json:"default_ec_level"` // Error correction: "L", "M", "Q", "H"
-	MinVersion      int           `json:"min_version"`      // Minimum version for auto-selection (1–40)
-	MaxVersion      int           `json:"max_version"`      // Maximum version for auto-selection (1–40)
-	AutoSize        bool          `json:"auto_size"`        // Enable automatic version sizing by data length
-	WorkerCount     int           `json:"worker_count"`     // Concurrent goroutines for batch operations (1–64)
-	QueueSize       int           `json:"queue_size"`       // Internal work queue capacity (>=1)
-	DefaultFormat   string        `json:"default_format"`   // Default render format: "png", "svg", "terminal", "pdf"
-	DefaultSize     int           `json:"default_size"`     // Default image width/height in pixels (100–4000)
-	QuietZone       int           `json:"quiet_zone"`       // Quiet-zone margin modules around the QR code (0–20)
-	ForegroundColor string        `json:"foreground_color"` // Hex color for dark modules (e.g. "#000000")
-	BackgroundColor string        `json:"background_color"` // Hex color for light modules (e.g. "#FFFFFF")
-	MaskPattern     int           `json:"mask_pattern"`     // Data mask pattern (0–7, or -1 for auto)
-	LogoSource      string        `json:"logo_source"`      // File path or URL of the overlay logo image
-	LogoSizeRatio   float64       `json:"logo_size_ratio"`  // Fraction of QR image occupied by logo (0.05–0.4)
-	LogoOverlay     bool          `json:"logo_overlay"`     // Whether to render the logo overlay
-	LogoTint        string        `json:"logo_tint"`        // Hex color to tint the logo image
-	Prefix          string        `json:"prefix"`           // URI prefix prepended to encoded data
-	SlowOperation   time.Duration `json:"slow_operation"`   // Threshold for logging slow generations
+	DefaultVersion  int           `json:"default_version"`
+	DefaultECLevel  string        `json:"default_ec_level"`
+	MinVersion      int           `json:"min_version"`
+	MaxVersion      int           `json:"max_version"`
+	AutoSize        bool          `json:"auto_size"`
+	WorkerCount     int           `json:"worker_count"`
+	QueueSize       int           `json:"queue_size"`
+	DefaultFormat   string        `json:"default_format"`
+	DefaultSize     int           `json:"default_size"`
+	QuietZone       int           `json:"quiet_zone"`
+	ForegroundColor string        `json:"foreground_color"`
+	BackgroundColor string        `json:"background_color"`
+	MaskPattern     int           `json:"mask_pattern"`
+	LogoSource      string        `json:"logo_source"`
+	LogoSizeRatio   float64       `json:"logo_size_ratio"`
+	LogoOverlay     bool          `json:"logo_overlay"`
+	LogoTint        string        `json:"logo_tint"`
+	Prefix          string        `json:"prefix"`
+	SlowOperation   time.Duration `json:"slow_operation"`
 }
 
-// defaultConfig creates a new Config with all defaults applied.
 func defaultConfig() *Config {
 	return &Config{
 		DefaultECLevel:  "M",
@@ -57,84 +51,145 @@ func defaultConfig() *Config {
 	}
 }
 
-// Clone returns a shallow copy of the configuration. The returned Config can be
-// modified independently without affecting the original. This is used internally
-// to snapshot the configuration under a read lock before applying per-call options.
+// Clone returns a shallow copy of the config.
 func (c *Config) Clone() *Config {
 	clone := *c
 	return &clone
 }
 
-// Merge overlays non-zero fields from other into c. Fields that are their
-// zero value in other are left unchanged in c. This is useful for applying
-// a partial configuration preset on top of a base configuration.
+// ConfigPatch provides explicit, zero-value-safe overrides for Config.
+// Only fields that are non-nil are applied — nil fields are treated as
+// "no change", eliminating the ambiguity of the old Merge method where
+// zero values (0, "", false) could not be distinguished from "not set".
 //
-//	base := defaultConfig()
-//	preset := &Config{DefaultSize: 512, ForegroundColor: "#1a1a2e"}
-//	base.Merge(preset)
-func (c *Config) Merge(other *Config) {
-	if other == nil {
-		return
+// Example:
+//
+//	patch := ConfigPatch{
+//	    WorkerCount: intPtr(8),
+//	    AutoSize:    boolPtr(false),
+//	}
+//	cfg := ApplyPatch(defaultConfig(), &patch)
+type ConfigPatch struct {
+	DefaultVersion  *int
+	DefaultECLevel  *string
+	MinVersion      *int
+	MaxVersion      *int
+	AutoSize        *bool
+	WorkerCount     *int
+	QueueSize       *int
+	DefaultFormat   *string
+	DefaultSize     *int
+	QuietZone       *int
+	ForegroundColor *string
+	BackgroundColor *string
+	MaskPattern     *int
+	LogoSource      *string
+	LogoSizeRatio   *float64
+	LogoOverlay     *bool
+	LogoTint        *string
+	Prefix          *string
+	SlowOperation   *time.Duration
+}
+
+// ApplyPatch applies all non-nil fields from patch to base, returning a new
+// Config. The original base is not modified.
+//
+//nolint:gocyclo,cyclop // field-by-field patch application is inherently linear
+func ApplyPatch(base *Config, patch *ConfigPatch) *Config {
+	out := base.Clone()
+
+	if patch.DefaultVersion != nil {
+		out.DefaultVersion = *patch.DefaultVersion
 	}
-	if other.DefaultVersion != 0 {
-		c.DefaultVersion = other.DefaultVersion
+	if patch.DefaultECLevel != nil {
+		out.DefaultECLevel = *patch.DefaultECLevel
 	}
-	mergeString(&c.DefaultECLevel, other.DefaultECLevel)
-	if other.MinVersion != 0 {
-		c.MinVersion = other.MinVersion
+	if patch.MinVersion != nil {
+		out.MinVersion = *patch.MinVersion
 	}
-	if other.MaxVersion != 0 {
-		c.MaxVersion = other.MaxVersion
+	if patch.MaxVersion != nil {
+		out.MaxVersion = *patch.MaxVersion
 	}
-	if other.AutoSize {
-		c.AutoSize = other.AutoSize
+	if patch.AutoSize != nil {
+		out.AutoSize = *patch.AutoSize
 	}
-	if other.WorkerCount != 0 {
-		c.WorkerCount = other.WorkerCount
+	if patch.WorkerCount != nil {
+		out.WorkerCount = *patch.WorkerCount
 	}
-	if other.QueueSize != 0 {
-		c.QueueSize = other.QueueSize
+	if patch.QueueSize != nil {
+		out.QueueSize = *patch.QueueSize
 	}
-	mergeString(&c.DefaultFormat, other.DefaultFormat)
-	if other.DefaultSize != 0 {
-		c.DefaultSize = other.DefaultSize
+	if patch.DefaultFormat != nil {
+		out.DefaultFormat = *patch.DefaultFormat
 	}
-	if other.QuietZone != 0 {
-		c.QuietZone = other.QuietZone
+	if patch.DefaultSize != nil {
+		out.DefaultSize = *patch.DefaultSize
 	}
-	mergeString(&c.ForegroundColor, other.ForegroundColor)
-	mergeString(&c.BackgroundColor, other.BackgroundColor)
-	if other.MaskPattern != 0 {
-		c.MaskPattern = other.MaskPattern
+	if patch.QuietZone != nil {
+		out.QuietZone = *patch.QuietZone
 	}
-	mergeString(&c.LogoSource, other.LogoSource)
-	if other.LogoSizeRatio != 0 {
-		c.LogoSizeRatio = other.LogoSizeRatio
+	if patch.ForegroundColor != nil {
+		out.ForegroundColor = *patch.ForegroundColor
 	}
-	if other.LogoOverlay {
-		c.LogoOverlay = other.LogoOverlay
+	if patch.BackgroundColor != nil {
+		out.BackgroundColor = *patch.BackgroundColor
 	}
-	mergeString(&c.LogoTint, other.LogoTint)
-	mergeString(&c.Prefix, other.Prefix)
-	if other.SlowOperation != 0 {
-		c.SlowOperation = other.SlowOperation
+	if patch.MaskPattern != nil {
+		out.MaskPattern = *patch.MaskPattern
+	}
+	if patch.LogoSource != nil {
+		out.LogoSource = *patch.LogoSource
+	}
+	if patch.LogoSizeRatio != nil {
+		out.LogoSizeRatio = *patch.LogoSizeRatio
+	}
+	if patch.LogoOverlay != nil {
+		out.LogoOverlay = *patch.LogoOverlay
+	}
+	if patch.LogoTint != nil {
+		out.LogoTint = *patch.LogoTint
+	}
+	if patch.Prefix != nil {
+		out.Prefix = *patch.Prefix
+	}
+	if patch.SlowOperation != nil {
+		out.SlowOperation = *patch.SlowOperation
+	}
+
+	return out
+}
+
+// ConfigToPatch creates a ConfigPatch from a Config, where every field is
+// set. This is useful when you want to serialize or compare a full config
+// as a patch.
+func ConfigToPatch(c *Config) ConfigPatch {
+	return ConfigPatch{
+		DefaultVersion:  &c.DefaultVersion,
+		DefaultECLevel:  &c.DefaultECLevel,
+		MinVersion:      &c.MinVersion,
+		MaxVersion:      &c.MaxVersion,
+		AutoSize:        &c.AutoSize,
+		WorkerCount:     &c.WorkerCount,
+		QueueSize:       &c.QueueSize,
+		DefaultFormat:   &c.DefaultFormat,
+		DefaultSize:     &c.DefaultSize,
+		QuietZone:       &c.QuietZone,
+		ForegroundColor: &c.ForegroundColor,
+		BackgroundColor: &c.BackgroundColor,
+		MaskPattern:     &c.MaskPattern,
+		LogoSource:      &c.LogoSource,
+		LogoSizeRatio:   &c.LogoSizeRatio,
+		LogoOverlay:     &c.LogoOverlay,
+		LogoTint:        &c.LogoTint,
+		Prefix:          &c.Prefix,
+		SlowOperation:   &c.SlowOperation,
 	}
 }
 
-// mergeString sets *dst to src when src is non-empty.
-// This helper reduces cyclomatic complexity in [Config.Merge].
-func mergeString(dst *string, src string) {
-	if src != "" {
-		*dst = src
-	}
-}
-
-// Validate checks that all configuration fields are within valid ranges and
-// returns an error describing the first violation found. Checked constraints
-// include: MinVersion <= MaxVersion, DefaultVersion within range, WorkerCount
-// (1–64), QueueSize (>=1), DefaultSize (100–4000), QuietZone (0–20),
-// LogoSource required when LogoOverlay is true, LogoSizeRatio (0.05–0.4),
-// and MaskPattern (-1–7).
+// Validate checks the config for invalid values and returns an error
+// describing the first problem found.
+//
+//nolint:gocyclo,cyclop // multi-field validation requires sequential checks
 func (c *Config) Validate() error {
 	if c.MinVersion > c.MaxVersion {
 		return fmt.Errorf("config: min_version (%d) must be <= max_version (%d)", c.MinVersion, c.MaxVersion)
@@ -155,7 +210,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("config: quiet_zone must be between 0 and 20, got %d", c.QuietZone)
 	}
 	if c.LogoOverlay && c.LogoSource == "" {
-		return fmt.Errorf("config: logo_source must be specified when logo_overlay is enabled")
+		return errors.New("config: logo_source must be specified when logo_overlay is enabled")
 	}
 	if c.LogoSizeRatio > 0 && (c.LogoSizeRatio < 0.05 || c.LogoSizeRatio > 0.4) {
 		return fmt.Errorf("config: logo_size_ratio must be between 0.05 and 0.4, got %.2f", c.LogoSizeRatio)
@@ -166,7 +221,52 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// parseECLevel converts an EC level string ("L", "M", "Q", "H") to its numeric value.
+// ValidatePatch checks a ConfigPatch for invalid values before applying.
+// Only non-nil fields are validated. Returns nil if all set fields are valid.
+//
+//nolint:gocyclo,cyclop // mirrors Validate with nil checks
+func ValidatePatch(patch *ConfigPatch) error {
+	if patch.MinVersion != nil && patch.MaxVersion != nil {
+		if *patch.MinVersion > *patch.MaxVersion {
+			return fmt.Errorf("config patch: min_version (%d) must be <= max_version (%d)", *patch.MinVersion, *patch.MaxVersion)
+		}
+	}
+	if patch.WorkerCount != nil {
+		if *patch.WorkerCount < 1 || *patch.WorkerCount > 64 {
+			return fmt.Errorf("config patch: worker_count must be between 1 and 64, got %d", *patch.WorkerCount)
+		}
+	}
+	if patch.QueueSize != nil {
+		if *patch.QueueSize < 1 {
+			return fmt.Errorf("config patch: queue_size must be >= 1, got %d", *patch.QueueSize)
+		}
+	}
+	if patch.DefaultSize != nil {
+		if *patch.DefaultSize < 100 || *patch.DefaultSize > 4000 {
+			return fmt.Errorf("config patch: default_size must be between 100 and 4000, got %d", *patch.DefaultSize)
+		}
+	}
+	if patch.QuietZone != nil {
+		if *patch.QuietZone < 0 || *patch.QuietZone > 20 {
+			return fmt.Errorf("config patch: quiet_zone must be between 0 and 20, got %d", *patch.QuietZone)
+		}
+	}
+	if patch.LogoOverlay != nil && *patch.LogoOverlay && patch.LogoSource != nil && *patch.LogoSource == "" {
+		return errors.New("config patch: logo_source must be specified when logo_overlay is enabled")
+	}
+	if patch.LogoSizeRatio != nil && *patch.LogoSizeRatio > 0 {
+		if *patch.LogoSizeRatio < 0.05 || *patch.LogoSizeRatio > 0.4 {
+			return fmt.Errorf("config patch: logo_size_ratio must be between 0.05 and 0.4, got %.2f", *patch.LogoSizeRatio)
+		}
+	}
+	if patch.MaskPattern != nil {
+		if *patch.MaskPattern < -1 || *patch.MaskPattern > 7 {
+			return fmt.Errorf("config patch: mask_pattern must be between -1 and 7, got %d", *patch.MaskPattern)
+		}
+	}
+	return nil
+}
+
 func parseECLevel(level string) int {
 	switch level {
 	case "L":
@@ -181,3 +281,23 @@ func parseECLevel(level string) int {
 		return -1
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Pointer helpers for constructing ConfigPatch values.
+// These are convenience functions to avoid verbose &value expressions.
+// ---------------------------------------------------------------------------
+
+// IntP returns a pointer to an int value.
+func IntP(v int) *int { return &v }
+
+// StringP returns a pointer to a string value.
+func StringP(v string) *string { return &v }
+
+// BoolP returns a pointer to a bool value.
+func BoolP(v bool) *bool { return &v }
+
+// Float64P returns a pointer to a float64 value.
+func Float64P(v float64) *float64 { return &v }
+
+// DurationP returns a pointer to a time.Duration value.
+func DurationP(v time.Duration) *time.Duration { return &v }

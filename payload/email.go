@@ -1,32 +1,18 @@
 package payload
 
 import (
-	"fmt"
+	"errors"
 	"net/url"
 	"strings"
 )
 
-// EmailPayload encodes an email message as a mailto: URI per RFC 6068.
-// The recipient, subject, body, and CC addresses are encoded as URL parameters.
-// Most smartphone QR readers will open the device's email client with these
-// fields pre-populated.
-//
-// Example encoded output:
-//
-//	mailto:alice@example.com?subject=Hello&body=World&cc=bob@example.com
 type EmailPayload struct {
-	// To is the recipient email address.
-	To string
-	// Subject is the email subject line.
+	To      string
 	Subject string
-	// Body is the email body text.
-	Body string
-	// CC is a list of carbon-copy recipients.
-	CC []string
+	Body    string
+	CC      []string
 }
 
-// Encode returns a mailto: URI with optional subject, body, and cc parameters.
-// All parameter values are URL-encoded using url.QueryEscape.
 func (e *EmailPayload) Encode() (string, error) {
 	if err := e.Validate(); err != nil {
 		return "", err
@@ -53,21 +39,18 @@ func (e *EmailPayload) Encode() (string, error) {
 	return b.String(), nil
 }
 
-// Validate checks that the recipient (To) address is non-empty.
 func (e *EmailPayload) Validate() error {
 	if e.To == "" {
-		return fmt.Errorf("email payload: recipient (To) must not be empty")
+		return errors.New("email payload: recipient (To) must not be empty")
 	}
 	return nil
 }
 
-// Type returns "email".
-func (e *EmailPayload) Type() string {
+func (*EmailPayload) Type() string {
 	return "email"
 }
 
-// Size returns the byte length of the encoded mailto URI.
 func (e *EmailPayload) Size() int {
-	encoded, _ := e.Encode() //nolint:errcheck // Size returns 0 on encode error
+	encoded, _ := e.Encode()
 	return len(encoded)
 }
