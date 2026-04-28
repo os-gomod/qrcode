@@ -212,8 +212,8 @@ func (c *Config) Validate() error {
 	if c.LogoOverlay && c.LogoSource == "" {
 		return errors.New("config: logo_source must be specified when logo_overlay is enabled")
 	}
-	if c.LogoSizeRatio > 0 && (c.LogoSizeRatio < 0.05 || c.LogoSizeRatio > 0.4) {
-		return fmt.Errorf("config: logo_size_ratio must be between 0.05 and 0.4, got %.2f", c.LogoSizeRatio)
+	if c.LogoSizeRatio > 0 && (c.LogoSizeRatio < 0.05 || c.LogoSizeRatio > 0.9) {
+		return fmt.Errorf("config: logo_size_ratio must be between 0.05 and 0.9, got %.2f", c.LogoSizeRatio)
 	}
 	if c.MaskPattern < -1 || c.MaskPattern > 7 {
 		return fmt.Errorf("config: mask_pattern must be between -1 and 7, got %d", c.MaskPattern)

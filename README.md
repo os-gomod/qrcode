@@ -1,6 +1,6 @@
 ## QRcode - Feature-rich QR code generation library for Go
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/os-gomod/qrcode.svg)](https://pkg.go.dev/github.com/os-gomod/qrcode)
+[![Go Reference](https://pkg.go.dev/badge/github.com/os-gomod/qrcode/v2.svg)](https://pkg.go.dev/github.com/os-gomod/qrcode/v2)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/go-1.22%2B-00ADD8.svg)](go.mod)
 [![Zero Dependencies](https://img.shields.io/badge/deps-zero-green.svg)]()
@@ -22,7 +22,7 @@ Zero external dependencies — pure stdlib only.
 ## Installation
 
 ```bash
-go get github.com/os-gomod/qrcode
+go get github.com/os-gomod/qrcode/v2
 ```
 
 ## Quick Start
@@ -37,8 +37,8 @@ import (
     "fmt"
     "os"
 
-    "github.com/os-gomod/qrcode"
-    "github.com/os-gomod/qrcode/payload"
+    "github.com/os-gomod/qrcode/v2"
+    "github.com/os-gomod/qrcode/v2/payload"
 )
 
 func main() {
@@ -197,43 +197,43 @@ b64, _ := client.Render(ctx, p, qrcode.FormatBase64)
 
 ## Payload Types (35 total)
 
-| # | Payload | Type | Key Fields |
-|---|---------|------|------------|
-| 1 | **Text** | `TextPayload` | `Text string` |
-| 2 | **URL** | `URLPayload` | `URL string, Title string` |
-| 3 | **WiFi** | `WiFiPayload` | `SSID, Password, Encryption, Hidden bool` |
-| 4 | **vCard** | `VCardPayload` | `FirstName, LastName, Phone, Email, Organization, Title, URL, Address, Note` |
-| 5 | **MeCard** | `MeCardPayload` | `Name, Phone, Email, URL, Birthday, Note, Address, Nickname` |
-| 6 | **SMS** | `SMSPayload` | `Phone string, Message string` |
-| 7 | **MMS** | `MMSPayload` | `Phone, Subject, Message` |
-| 8 | **Phone** | `PhonePayload` | `Number string` |
-| 9 | **Email** | `EmailPayload` | `To, Subject, Body, CC []string` |
-| 10 | **Geo** | `GeoPayload` | `Latitude, Longitude float64` |
-| 11 | **Calendar** | `CalendarPayload` | `Title, Description, Location, Start, End time.Time, AllDay bool` |
-| 12 | **Event Ticket** | `EventPayload` | `EventID, EventName, Venue, StartTime, Category, Seat, Organizer, Description, URL` |
-| 13 | **PayPal** | `PayPalPayload` | `Username, Amount, Currency, Reference` |
-| 14 | **Crypto** | `CryptoPayload` | `Address, Amount, CryptoType` |
-| 15 | **Twitter** | `TwitterPayload` | `Username string` |
-| 16 | **Twitter Follow** | `TwitterFollowPayload` | `Username string` |
-| 17 | **Instagram** | `InstagramPayload` | `Username string` |
-| 18 | **Facebook** | `FacebookPayload` | `PageURL string` |
-| 19 | **LinkedIn** | `LinkedInPayload` | `ProfileURL string` |
-| 20 | **Telegram** | `TelegramPayload` | `Username string` |
-| 21 | **YouTube Video** | `YouTubeVideoPayload` | `VideoID string` |
-| 22 | **YouTube Channel** | `YouTubeChannelPayload` | `ChannelID string` |
-| 23 | **Spotify Track** | `SpotifyTrackPayload` | `TrackID string` |
-| 24 | **Spotify Playlist** | `SpotifyPlaylistPayload` | `PlaylistID string` |
-| 25 | **Apple Music** | `AppleMusicTrackPayload` | `TrackID, StoreFront string` |
-| 26 | **WhatsApp** | `WhatsAppPayload` | `Phone, Message` |
-| 27 | **Zoom** | `ZoomPayload` | `MeetingID, Password, DisplayName` |
-| 28 | **Google Maps** | `GoogleMapsPayload` | `Latitude, Longitude, Query, Zoom int` |
-| 29 | **Google Maps Place** | `GoogleMapsPlacePayload` | `PlaceName string` |
-| 30 | **Google Maps Directions** | `GoogleMapsDirectionsPayload` | `Origin, Destination, TravelMode` |
-| 31 | **Apple Maps** | `AppleMapsPayload` | `Latitude, Longitude, Query` |
-| 32 | **App Store/Google Play** | `MarketPayload` | `Platform, PackageID, AppName, Campaign` |
-| 33 | **iBeacon** | `IBeaconPayload` | `UUID, Major, Minor int, Manufacturer` |
-| 34 | **NTP Locale** | `NTPLocalePayload` | `Host, Port, Version int, Description` |
-| 35 | **PID** | `PIDPayload` | See `payload/pid.go` for fields |
+| #   | Payload                    | Type                          | Key Fields                                                                          |
+| --- | -------------------------- | ----------------------------- | ----------------------------------------------------------------------------------- |
+| 1   | **Text**                   | `TextPayload`                 | `Text string`                                                                       |
+| 2   | **URL**                    | `URLPayload`                  | `URL string, Title string`                                                          |
+| 3   | **WiFi**                   | `WiFiPayload`                 | `SSID, Password, Encryption, Hidden bool`                                           |
+| 4   | **vCard**                  | `VCardPayload`                | `FirstName, LastName, Phone, Email, Organization, Title, URL, Address, Note`        |
+| 5   | **MeCard**                 | `MeCardPayload`               | `Name, Phone, Email, URL, Birthday, Note, Address, Nickname`                        |
+| 6   | **SMS**                    | `SMSPayload`                  | `Phone string, Message string`                                                      |
+| 7   | **MMS**                    | `MMSPayload`                  | `Phone, Subject, Message`                                                           |
+| 8   | **Phone**                  | `PhonePayload`                | `Number string`                                                                     |
+| 9   | **Email**                  | `EmailPayload`                | `To, Subject, Body, CC []string`                                                    |
+| 10  | **Geo**                    | `GeoPayload`                  | `Latitude, Longitude float64`                                                       |
+| 11  | **Calendar**               | `CalendarPayload`             | `Title, Description, Location, Start, End time.Time, AllDay bool`                   |
+| 12  | **Event Ticket**           | `EventPayload`                | `EventID, EventName, Venue, StartTime, Category, Seat, Organizer, Description, URL` |
+| 13  | **PayPal**                 | `PayPalPayload`               | `Username, Amount, Currency, Reference`                                             |
+| 14  | **Crypto**                 | `CryptoPayload`               | `Address, Amount, CryptoType`                                                       |
+| 15  | **Twitter**                | `TwitterPayload`              | `Username string`                                                                   |
+| 16  | **Twitter Follow**         | `TwitterFollowPayload`        | `Username string`                                                                   |
+| 17  | **Instagram**              | `InstagramPayload`            | `Username string`                                                                   |
+| 18  | **Facebook**               | `FacebookPayload`             | `PageURL string`                                                                    |
+| 19  | **LinkedIn**               | `LinkedInPayload`             | `ProfileURL string`                                                                 |
+| 20  | **Telegram**               | `TelegramPayload`             | `Username string`                                                                   |
+| 21  | **YouTube Video**          | `YouTubeVideoPayload`         | `VideoID string`                                                                    |
+| 22  | **YouTube Channel**        | `YouTubeChannelPayload`       | `ChannelID string`                                                                  |
+| 23  | **Spotify Track**          | `SpotifyTrackPayload`         | `TrackID string`                                                                    |
+| 24  | **Spotify Playlist**       | `SpotifyPlaylistPayload`      | `PlaylistID string`                                                                 |
+| 25  | **Apple Music**            | `AppleMusicTrackPayload`      | `TrackID, StoreFront string`                                                        |
+| 26  | **WhatsApp**               | `WhatsAppPayload`             | `Phone, Message`                                                                    |
+| 27  | **Zoom**                   | `ZoomPayload`                 | `MeetingID, Password, DisplayName`                                                  |
+| 28  | **Google Maps**            | `GoogleMapsPayload`           | `Latitude, Longitude, Query, Zoom int`                                              |
+| 29  | **Google Maps Place**      | `GoogleMapsPlacePayload`      | `PlaceName string`                                                                  |
+| 30  | **Google Maps Directions** | `GoogleMapsDirectionsPayload` | `Origin, Destination, TravelMode`                                                   |
+| 31  | **Apple Maps**             | `AppleMapsPayload`            | `Latitude, Longitude, Query`                                                        |
+| 32  | **App Store/Google Play**  | `MarketPayload`               | `Platform, PackageID, AppName, Campaign`                                            |
+| 33  | **iBeacon**                | `IBeaconPayload`              | `UUID, Major, Minor int, Manufacturer`                                              |
+| 34  | **NTP Locale**             | `NTPLocalePayload`            | `Host, Port, Version int, Description`                                              |
+| 35  | **PID**                    | `PIDPayload`                  | See `payload/pid.go` for fields                                                     |
 
 ## Advanced Features
 
@@ -256,7 +256,7 @@ results, _ := client.Batch(ctx, payloads)
 Advanced batch with the `batch` package:
 
 ```go
-import "github.com/os-gomod/qrcode/batch"
+import "github.com/os-gomod/qrcode/v2/batch"
 
 proc := batch.NewProcessor(client,
     batch.WithBatchFormat(qrcode.FormatPNG),
@@ -279,8 +279,8 @@ Use the public renderer re-exports for fine-grained rendering control:
 ```go
 import (
     "bytes"
-    qrcode "github.com/os-gomod/qrcode"
-    "github.com/os-gomod/qrcode/payload"
+    qrcode "github.com/os-gomod/qrcode/v2"
+    "github.com/os-gomod/qrcode/v2/payload"
 )
 
 qr, _ := client.Generate(ctx, &payload.TextPayload{Text: "Styled"})
@@ -351,7 +351,7 @@ data, _ := client.Render(ctx, &payload.URLPayload{URL: "https://example.com"}, q
 Or use the `logo` package for manual control:
 
 ```go
-import "github.com/os-gomod/qrcode/logo"
+import "github.com/os-gomod/qrcode/v2/logo"
 
 logoProc := logo.New("logo.png", 0.25)
 logoImg, _ := logoProc.Load()
@@ -364,7 +364,7 @@ final := logo.OverlayLogo(qrImage, resizedLogo, 4)
 ### Structured Error Handling
 
 ```go
-import qrerrors "github.com/os-gomod/qrcode/errors"
+import qrerrors "github.com/os-gomod/qrcode/v2/errors"
 
 if err != nil {
     if qrerrors.IsCode(err, qrerrors.ErrCodeValidation) {
@@ -378,26 +378,26 @@ if err != nil {
 
 ## Configuration Options
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `WithDefaultSize(int)` | Output image size in pixels (100–4000) | `300` |
-| `WithVersion(int)` | QR version (1–40), 0 for auto | `0` |
-| `WithMinVersion(int)` | Minimum QR version | `1` |
-| `WithMaxVersion(int)` | Maximum QR version | `40` |
-| `WithAutoSize(bool)` | Automatic version selection | `true` |
-| `WithErrorCorrection(ECLevel)` | Error correction level (L/M/Q/H) | `M` |
-| `WithECLevel(ECLevel)` | Canonical alias for `WithErrorCorrection` | `M` |
-| `WithQuietZone(int)` | Quiet zone (margin) in modules (0–20) | `4` |
-| `WithWorkerCount(int)` | Max concurrent workers for batch (1–64) | `4` |
-| `WithQueueSize(int)` | Internal queue size | `1024` |
-| `WithDefaultFormat(Format)` | Default output format | `FormatPNG` |
-| `WithForegroundColor(string)` | Foreground hex color | `#000000` |
-| `WithBackgroundColor(string)` | Background hex color | `#FFFFFF` |
-| `WithMaskPattern(int)` | Mask pattern (-1 for auto, 0–7) | `-1` |
-| `WithLogo(string, float64)` | Logo source path and size ratio (0.05–0.4) | disabled |
-| `WithLogoOverlay(bool)` | Enable/disable logo overlay | `false` |
-| `WithLogoTint(string)` | Tint color applied to the logo | disabled |
-| `WithPrefix(string)` | Filename prefix for batch output | disabled |
+| Option                         | Description                                | Default     |
+| ------------------------------ | ------------------------------------------ | ----------- |
+| `WithDefaultSize(int)`         | Output image size in pixels (100–4000)     | `300`       |
+| `WithVersion(int)`             | QR version (1–40), 0 for auto              | `0`         |
+| `WithMinVersion(int)`          | Minimum QR version                         | `1`         |
+| `WithMaxVersion(int)`          | Maximum QR version                         | `40`        |
+| `WithAutoSize(bool)`           | Automatic version selection                | `true`      |
+| `WithErrorCorrection(ECLevel)` | Error correction level (L/M/Q/H)           | `M`         |
+| `WithECLevel(ECLevel)`         | Canonical alias for `WithErrorCorrection`  | `M`         |
+| `WithQuietZone(int)`           | Quiet zone (margin) in modules (0–20)      | `4`         |
+| `WithWorkerCount(int)`         | Max concurrent workers for batch (1–64)    | `4`         |
+| `WithQueueSize(int)`           | Internal queue size                        | `1024`      |
+| `WithDefaultFormat(Format)`    | Default output format                      | `FormatPNG` |
+| `WithForegroundColor(string)`  | Foreground hex color                       | `#000000`   |
+| `WithBackgroundColor(string)`  | Background hex color                       | `#FFFFFF`   |
+| `WithMaskPattern(int)`         | Mask pattern (-1 for auto, 0–7)            | `-1`        |
+| `WithLogo(string, float64)`    | Logo source path and size ratio (0.05–0.4) | disabled    |
+| `WithLogoOverlay(bool)`        | Enable/disable logo overlay                | `false`     |
+| `WithLogoTint(string)`         | Tint color applied to the logo             | disabled    |
+| `WithPrefix(string)`           | Filename prefix for batch output           | disabled    |
 
 ## Client Interface
 

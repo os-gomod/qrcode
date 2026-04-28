@@ -29,7 +29,7 @@ func main() {
 	// Step 1: Create a simple PNG logo programmatically (100x100 blue square with border).
 	fmt.Println("1. Creating sample logo image...")
 	logoPath := "sample_logo.png"
-	if err := createSampleLogo(logoPath, 100, color.RGBA{R: 30, G: 100, B: 220, A: 255}); err != nil {
+	if err := createSampleLogo(logoPath, 500, color.RGBA{R: 30, G: 100, B: 220, A: 255}); err != nil {
 		log.Fatalf("Failed to create sample logo: %v", err)
 	}
 	fmt.Printf("   Saved %s\n", logoPath)
@@ -41,7 +41,7 @@ func main() {
 		qrcode.WithDefaultSize(400),
 		qrcode.WithErrorCorrection(qrcode.LevelH),
 		qrcode.WithQuietZone(4),
-		qrcode.WithLogo(logoPath, 0.20),
+		qrcode.WithLogo(logoPath, 0.90),
 	)
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
